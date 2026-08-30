@@ -1,0 +1,6 @@
+<Bindings>
+    <Binding name="CLICK TFQoL_ActionBarToggle:LeftButton" category="BINDING_HEADER_TFQoL"/>
+    <Binding name="CLICK TFQoL_RepairMountButton:LeftButton" category="BINDING_HEADER_TFQoL"/>
+    <Binding name="CLICK TFQoL_AuctionMountButton:LeftButton" category="BINDING_HEADER_TFQoL"/>
+    <Binding name="CLICK TFQoL_CharacterViewer_Toggle:LeftButton" category="BINDING_HEADER_TFQoL"/>
+</Bindings>

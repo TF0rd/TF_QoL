@@ -1,0 +1,60 @@
+## Interface: 120000, 120001
+## Title: TF QoL
+## Notes: Tweaks and QoL improvements.
+## Author: TF0rd
+## Version: 1.4.0
+## SavedVariables: TFQoLDB
+## IconTexture: Interface\AddOns\TF_QoL\Media\Icon.tga
+## Category: Quality of Life
+
+# ── Core ────────────────────────────────────────────────────────
+Core.lua
+Media.lua
+
+# ── GUI Framework ───────────────────────────────────────────────
+GUI\Theme.lua
+GUI\Core.lua
+GUI\Widgets\Toggle.lua
+GUI\Widgets\Slider.lua
+GUI\Widgets\Dropdown.lua
+GUI\Widgets\ScrollList.lua
+GUI\Widgets\Keybind.lua
+GUI\MainFrame.lua
+GUI\Sidebar.lua
+
+# ── Modules ─────────────────────────────────────────────────────
+Modules\SharedActionBars.lua
+Modules\PotionAlert.lua
+Modules\LustAlert.lua
+Modules\StealthIndicator.lua
+Modules\OCETag.lua
+Modules\GroupJoinedReminder.lua
+Modules\ItemUpgradeReminder.lua
+Modules\CVarBrowser.lua
+Modules\ActionBarToggle.lua
+Modules\BlizzardFrames.lua
+Modules\MountActions.lua
+Modules\ConsumableMacros.lua
+Modules\CharacterViewer.lua
+Modules\MuteSounds.lua
+
+# ── GUI Tabs ────────────────────────────────────────────────────
+GUI\Tabs\TabHelpers.lua
+GUI\Tabs\Home.lua
+GUI\Tabs\SharedActionBars.lua
+GUI\Tabs\PotionAlert.lua
+GUI\Tabs\LustAlert.lua
+GUI\Tabs\StealthIndicator.lua
+GUI\Tabs\OCETag.lua
+GUI\Tabs\GroupJoinedReminder.lua
+GUI\Tabs\ItemUpgradeReminder.lua
+GUI\Tabs\CVarBrowser.lua
+GUI\Tabs\ActionBarToggle.lua
+GUI\Tabs\BlizzardFrames.lua
+GUI\Tabs\MountActions.lua
+GUI\Tabs\ConsumableMacros.lua
+GUI\Tabs\CharacterViewer.lua
+GUI\Tabs\MuteSounds.lua
+
+# ── Settings (loaded last) ──────────────────────────────────────
+Settings.lua
