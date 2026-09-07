@@ -6,21 +6,14 @@
 local _, addon = ...
 local GUIFrame = addon.GUIFrame
 
-local function FormatKeyForDisplay(key)
-    if not key or key == "" then return "|cffF9E2AFNot Bound|r" end
-    return key:gsub("-", "+")
-end
-
 local TOGGLE_ACTION = "CLICK TFQoL_CharacterViewer_Toggle:LeftButton"
 
 GUIFrame:RegisterContent("CharacterViewer", function(scrollChild, yOffset)
     local Theme = addon.Theme
 
     -- ── About card ──────────────────────────────────────────────────────────
-    local aboutCard = GUIFrame:CreateCard(scrollChild, "About", yOffset)
-    aboutCard:AddLabel(
+    yOffset = GUIFrame:AddAboutCard(scrollChild, yOffset, "About",
         "Snapshots current character on login. Shows ilvl, Great Vault, currencies, and gold for all known characters.")
-    yOffset = yOffset + aboutCard:GetContentHeight() + Theme.paddingLarge
 
     -- ── Module header (enable + test-mode-disabled module overlay) ──────────
     local headerCard = GUIFrame:CreateCard(scrollChild, "Character Viewer", yOffset)
@@ -44,41 +37,8 @@ GUIFrame:RegisterContent("CharacterViewer", function(scrollChild, yOffset)
 
     -- ── Keybind card ────────────────────────────────────────────────────────
     local currentKey = GetBindingKey(TOGGLE_ACTION) or ""
-    local kbCard = GUIFrame:CreateCard(scrollChild, "Keybind", yOffset)
-
-    local keyLabel = kbCard:AddLabel("Toggle Key: " .. FormatKeyForDisplay(currentKey))
-    keyLabel:SetTextColor(Theme.textPrimary[1], Theme.textPrimary[2], Theme.textPrimary[3], 1)
-    kbCard._keyLabel = keyLabel
-
-    local openBtn = CreateFrame("Button", nil, kbCard.content, "BackdropTemplate")
-    openBtn:SetHeight(28)
-    openBtn:SetBackdrop({
-        bgFile   = "Interface\\Buttons\\WHITE8X8",
-        edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 1,
-    })
-    openBtn:SetBackdropColor(Theme.bgLight[1], Theme.bgLight[2], Theme.bgLight[3], 1)
-    openBtn:SetBackdropBorderColor(Theme.border[1], Theme.border[2], Theme.border[3], 1)
-    local btnText = openBtn:CreateFontString(nil, "OVERLAY")
-    btnText:SetPoint("CENTER")
-    addon:ApplyThemeFont(btnText, "small")
-    btnText:SetText("Open Keybindings Settings")
-    btnText:SetTextColor(Theme.accent[1], Theme.accent[2], Theme.accent[3], 1)
-    openBtn:SetScript("OnEnter", function(self)
-        self:SetBackdropBorderColor(Theme.accent[1], Theme.accent[2], Theme.accent[3], 1)
-    end)
-    openBtn:SetScript("OnLeave", function(self)
-        self:SetBackdropBorderColor(Theme.border[1], Theme.border[2], Theme.border[3], 1)
-    end)
-    openBtn:SetScript("OnClick", function()
-        if Settings and Settings.OpenToCategory and Settings.KEYBINDINGS_CATEGORY_ID then
-            Settings.OpenToCategory(Settings.KEYBINDINGS_CATEGORY_ID, BINDING_HEADER_TFQoL)
-        end
-    end)
-    kbCard:AddRow(openBtn, 28)
-
-    kbCard:AddLabel("Set keybinds in WoW's Key Bindings panel (ESC > Options > Keybindings).")
-    yOffset = yOffset + kbCard:GetContentHeight() + Theme.paddingLarge
+    yOffset = GUIFrame:AddKeybindCard(scrollChild, yOffset, "Keybind",
+        { { label = "Toggle Key", key = currentKey } })
 
     -- ── Data card ───────────────────────────────────────────────────────────
     local dataCard = GUIFrame:CreateCard(scrollChild, "Stored Data", yOffset)

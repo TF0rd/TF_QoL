@@ -10,9 +10,8 @@ GUIFrame:RegisterContent("LustAlert", function(scrollChild, yOffset)
 
     -- ── About card ──────────────────────────────────────────────────────────
 
-    local aboutCard = GUIFrame:CreateCard(scrollChild, "About", yOffset)
-    aboutCard:AddLabel("Displays an alert when Bloodlust, Heroism, Time Warp, or an equivalent haste effect becomes active.")
-    yOffset = yOffset + aboutCard:GetContentHeight() + Theme.paddingLarge
+    yOffset = GUIFrame:AddAboutCard(scrollChild, yOffset, "About",
+        "Displays an alert when Bloodlust, Heroism, Time Warp, or an equivalent haste effect becomes active.")
 
     -- ── Module header with unique setting ──────────────────────────────────
 
@@ -33,10 +32,8 @@ GUIFrame:RegisterContent("LustAlert", function(scrollChild, yOffset)
 
     -- ── Settings cards ──────────────────────────────────────────────────────
 
-    yOffset = GUIFrame:AddVisibilityCard(scrollChild, yOffset, "lustAlert")
-    yOffset = GUIFrame:AddFontCard(scrollChild, yOffset, "lustAlert")
-    yOffset = GUIFrame:AddPositionCard(scrollChild, yOffset, "lustAlert")
-    yOffset = GUIFrame:AddSoundCard(scrollChild, yOffset, "lustAlert")
+    yOffset = GUIFrame:AddModuleSettingsCards(scrollChild, yOffset,
+        "lustAlert", { "visibility", "font", "position", "sound" })
 
     return yOffset
 end)

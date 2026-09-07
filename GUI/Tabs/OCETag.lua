@@ -10,9 +10,8 @@ GUIFrame:RegisterContent("OCETag", function(scrollChild, yOffset)
 
     -- ── About card ──────────────────────────────────────────────────────────
 
-    local aboutCard = GUIFrame:CreateCard(scrollChild, "About", yOffset)
-    aboutCard:AddLabel("Flags Oceanic realm groups in the Premade Groups Finder with an |cFFFF4040[OCE]|r tag.")
-    yOffset = yOffset + aboutCard:GetContentHeight() + Theme.paddingLarge
+    yOffset = GUIFrame:AddAboutCard(scrollChild, yOffset, "About",
+        "Flags Oceanic realm groups in the Premade Groups Finder with an |cFFFF4040[OCE]|r tag.")
 
     -- ── Module header ──────────────────────────────────────────────────────
 

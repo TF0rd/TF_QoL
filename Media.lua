@@ -1,10 +1,10 @@
 -- ════════════════════════════════════════════════════════════════
--- Part 3: Media Registration
+-- Part 2: Media Registration
 -- (Registers custom fonts and sounds with LibSharedMedia-3.0)
 -- ════════════════════════════════════════════════════════════════
 
 local _, addon = ...
-local LSM = LibStub("LibSharedMedia-3.0", true)
+local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
 
 if not LSM then return end
 

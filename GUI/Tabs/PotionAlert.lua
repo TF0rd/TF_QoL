@@ -10,9 +10,8 @@ GUIFrame:RegisterContent("PotionAlert", function(scrollChild, yOffset)
 
     -- ── About card ──────────────────────────────────────────────────────────
 
-    local aboutCard = GUIFrame:CreateCard(scrollChild, "About", yOffset)
-    aboutCard:AddLabel("Reminds you to use a combat potion when one is available.")
-    yOffset = yOffset + aboutCard:GetContentHeight() + Theme.paddingLarge
+    yOffset = GUIFrame:AddAboutCard(scrollChild, yOffset, "About",
+        "Reminds you to use a combat potion when one is available.")
 
     -- ── Module header ──────────────────────────────────────────────────────
 
@@ -22,10 +21,8 @@ GUIFrame:RegisterContent("PotionAlert", function(scrollChild, yOffset)
 
     -- ── Settings cards ──────────────────────────────────────────────────────
 
-    yOffset = GUIFrame:AddVisibilityCard(scrollChild, yOffset, "potionAlert")
-    yOffset = GUIFrame:AddFontCard(scrollChild, yOffset, "potionAlert")
-    yOffset = GUIFrame:AddPositionCard(scrollChild, yOffset, "potionAlert")
-    yOffset = GUIFrame:AddSoundCard(scrollChild, yOffset, "potionAlert")
+    yOffset = GUIFrame:AddModuleSettingsCards(scrollChild, yOffset,
+        "potionAlert", { "visibility", "font", "position", "sound" })
 
     return yOffset
 end)

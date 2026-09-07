@@ -10,9 +10,8 @@ GUIFrame:RegisterContent("GroupJoinedReminder", function(scrollChild, yOffset)
 
     -- ── About card ──────────────────────────────────────────────────────────
 
-    local aboutCard = GUIFrame:CreateCard(scrollChild, "About", yOffset)
-    aboutCard:AddLabel("Prints a chat message when you join a Mythic+ or Mythic raid group via the Premade Groups Finder.")
-    yOffset = yOffset + aboutCard:GetContentHeight() + Theme.paddingLarge
+    yOffset = GUIFrame:AddAboutCard(scrollChild, yOffset, "About",
+        "Prints a chat message when you join a Mythic+ or Mythic raid group via the Premade Groups Finder.")
 
     -- ── Module header ──────────────────────────────────────────────────────
 

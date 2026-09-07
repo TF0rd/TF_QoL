@@ -356,11 +356,25 @@ end
 function GUIFrame:RefreshContent()
     if not self.contentArea then return end
     if self.contentArea.scrollFrame then self.contentArea.scrollFrame:Show() end
+    if GameTooltip and GameTooltip.Hide then GameTooltip:Hide() end
+
+    -- Tear down previous tab: run cleanup delegates, close any open dropdown
+    -- (its list lives on the overlay), then destroy content frames outright.
+    for _, callback in pairs(self.contentCleanupCallbacks) do pcall(callback) end
+    wipe(self.contentCleanupCallbacks)
+    if self.activeDropdown and self.activeDropdown.closeDropdown then
+        pcall(self.activeDropdown.closeDropdown, true)
+        self.activeDropdown = nil
+    end
 
     local scrollChild = self.contentArea.scrollChild
     for _, child in ipairs({ scrollChild:GetChildren() }) do
-        child:Hide()
-        child:SetParent(nil)
+        if child.Destroy then
+            child:Destroy()
+        else
+            child:Hide()
+            child:SetParent(nil)
+        end
     end
     for _, region in ipairs({ scrollChild:GetRegions() }) do
         if region:GetObjectType() == "FontString" or region:GetObjectType() == "Texture" then
@@ -376,7 +390,9 @@ function GUIFrame:RefreshContent()
         if ok and result then
             yOffset = result
         elseif not ok then
-            print("|cffff0000TF_QoL|r error building tab '" .. tostring(itemId) .. "': " .. tostring(result))
+            local stack = debugstack and debugstack(2, 3, 0) or ""
+            stack = tostring(stack):gsub("%s+", " "):sub(1, 300)
+            print("|cffff0000TF_QoL|r error building tab '" .. tostring(itemId) .. "': " .. tostring(result) .. " | " .. stack)
         end
     end
 

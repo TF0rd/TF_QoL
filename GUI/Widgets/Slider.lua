@@ -11,7 +11,6 @@ local tostring = tostring
 local CreateFrame = CreateFrame
 local C_Timer = C_Timer
 local math_floor, math_max, math_min = math.floor, math.max, math.min
-local GetTime = GetTime
 
 -- ════════════════════════════════════════════════════════════════════════════════════
 -- Part 1: Constants
@@ -195,11 +194,25 @@ function GUIFrame:CreateSlider(parent, labelText, min, max, step, value, callbac
     valueEdit:SetText(tostring(value))
     row.valueEdit = valueEdit
 
-    -- ── Slider Event Handlers ───────────────────────────────────────────────────────
+    -- ── Slider Event Handlers (trailing-edge debounce + force-fire on release) ──────
 
     local isUpdating = false
-    local throttleDelay = 0.1
-    local lastUpdate = 0
+    local debounceDelay = 0.1
+    local pendingValue = nil
+    local debounceTimer = nil
+    local suppressCallbacks = true -- held through initial layout so creation never fires
+
+    local function FireCallback(val)
+        pendingValue = nil
+        if callback then callback(val) end
+    end
+
+    local function CancelDebounce()
+        if debounceTimer then
+            debounceTimer:Cancel()
+            debounceTimer = nil
+        end
+    end
 
     local function UpdateFill()
         local val = slider:GetValue()
@@ -217,10 +230,13 @@ function GUIFrame:CreateSlider(parent, labelText, min, max, step, value, callbac
     slider:SetScript("OnValueChanged", function(self, val)
         UpdateFill()
         UpdateThumbPosition()
-        local t = GetTime()
-        if t - lastUpdate < throttleDelay then return end
-        lastUpdate = t
-        if callback then callback(val) end
+        if suppressCallbacks then return end
+        pendingValue = val
+        CancelDebounce()
+        debounceTimer = C_Timer.NewTimer(debounceDelay, function()
+            debounceTimer = nil
+            if pendingValue ~= nil then FireCallback(pendingValue) end
+        end)
     end)
     slider:SetScript("OnSizeChanged", function() UpdateFill(); UpdateThumbPosition() end)
 
@@ -265,12 +281,15 @@ function GUIFrame:CreateSlider(parent, labelText, min, max, step, value, callbac
         if btn == "LeftButton" then
             curDrag = false
             AnimateThumbColor(self:IsMouseOver(), false)
+            -- Force-fire so the final drag value is never swallowed by the debounce
+            CancelDebounce()
+            if pendingValue ~= nil then FireCallback(pendingValue) end
         end
     end)
     slider:SetScript("OnEnter", function(self) if not curDrag then AnimateThumbColor(true, false) end end)
     slider:SetScript("OnLeave", function(self) if not curDrag then AnimateThumbColor(false, false) end end)
 
-    C_Timer.After(0, function() UpdateFill(); UpdateThumbPosition() end)
+    C_Timer.After(0, function() UpdateFill(); UpdateThumbPosition(); suppressCallbacks = false end)
 
     -- ════════════════════════════════════════════════════════════════════════════════
     -- Part 3: Public API
@@ -286,7 +305,7 @@ function GUIFrame:CreateSlider(parent, labelText, min, max, step, value, callbac
             leftStepper:EnableMouse(true)
             rightStepper:EnableMouse(true)
         else
-            row:SetAlpha(0.4)
+            row:SetAlpha(addon.Theme.disabledAlpha)
             slider:EnableMouse(false)
             valueEdit:EnableMouse(false)
             leftStepper:EnableMouse(false)

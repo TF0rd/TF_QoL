@@ -43,7 +43,6 @@ local date                     = date
 local RED_FONT_COLOR           = RED_FONT_COLOR
 local GREEN_FONT_COLOR         = GREEN_FONT_COLOR
 local WHITE_FONT_COLOR         = WHITE_FONT_COLOR
-local GetMoneyString           = GetMoneyString
 local C_Bank                   = C_Bank
 local Enum_BankType_Account    = Enum and Enum.BankType and Enum.BankType.Account
 local issecretvalue            = issecretvalue
@@ -293,6 +292,10 @@ local HEADER_H       = 32
 local FOOTER_H       = 24
 local BINDING_NAME   = "Toggle Character Viewer"
 
+-- Window scale limits (slider range and SetScale clamp)
+local SCALE_MIN      = 0.5
+local SCALE_MAX      = 1.5
+
 -- Gold coin icon (inline texture markup for FontStrings)
 local GOLD_ICON = "|TInterface\\MoneyFrame\\UI-GoldIcon:14:14:0:0:0:0:0:0|t"
 
@@ -328,11 +331,11 @@ end
 --  via the BINDING_HEADER_TFQoL category. Mirror it here for redundancy.)
 -- ════════════════════════════════════════════════════════════════════════════════
 
-_G["BINDING_HEADER_TFQoL"] = "TF QoL"
 _G["BINDING_NAME_" .. TOGGLE_ACTION] = BINDING_NAME
 
 local toggleButton
 local holder
+local _pendingEnable = false -- true when OnEnable was deferred by combat lockdown
 
 -- CharacterViewer is deliberately inert during combat lockdown. Building,
 -- laying out, rendering, and SavedVariables mutation are work too.
@@ -1488,6 +1491,12 @@ local function EnsureJournalatorArchiveLoaded()
     end)
 end
 
+-- Shared bind-label text (footer build + BINDINGS_LOADED refresh).
+local function SetBindLabelText(label)
+    local key = GetBindingKey(TOGGLE_ACTION) or ""
+    label:SetText("Bind: " .. (key ~= "" and key or "Not bound"))
+end
+
 local function BuildFooter(parent)
     local Theme = T()
     local footer = CreateFrame("Frame", nil, parent)
@@ -1503,8 +1512,7 @@ local function BuildFooter(parent)
     left:SetPoint("LEFT", footer, "LEFT", Theme.paddingMedium, 0)
     addon:ApplyThemeFont(left, "small")
     left:SetTextColor(Theme.textMuted[1], Theme.textMuted[2], Theme.textMuted[3], 1)
-    local key = GetBindingKey(TOGGLE_ACTION) or ""
-    left:SetText("Bind: " .. (key ~= "" and key or "Not bound"))
+    SetBindLabelText(left)
     left:SetWordWrap(false)
     footer.bindLabel = left
 
@@ -1624,6 +1632,10 @@ function module.UI:Build()
     self.frame = frame
     self.header = header
     self.footer = footer
+    -- Fresh body host: drop any recycled row frames from a previous build.
+    self._rowFrames = nil
+    self._structSig = nil
+    self._staticSig = nil
     return frame
 end
 
@@ -1639,6 +1651,30 @@ local function RelTime(ts)
     if d < 86400 then return math.floor(d / 3600) .. "h ago" end
     if d < 86400 * 30 then return math.floor(d / 86400) .. "d ago" end
     return math.floor(d / 86400 / 30) .. "mo ago"
+end
+
+-- Hex color markup shared by the name-line builders below.
+local function ColorHex(color)
+    return string.format("%02x%02x%02x",
+        color[1] * 255, color[2] * 255, color[3] * 255)
+end
+
+-- One-line row label: "Name - Realm · 1m ago" with the realm and timestamp
+-- appended as muted text. Single source of truth for BuildCharRow and the
+-- pre-render width measurement.
+local function BuildNameLabelText(rowData)
+    local Theme = T()
+    local parts = { rowData.name or "?" }
+    if rowData.realm and rowData.realm ~= "" then
+        parts[#parts + 1] = "|cff" .. ColorHex(Theme.textMuted)
+            .. "- " .. rowData.realm .. "|r"
+    end
+    local relText = RelTime(rowData.lastSeen)
+    if relText and relText ~= "" then
+        parts[#parts + 1] = "|cff" .. ColorHex(Theme.textSubtle)
+            .. "· " .. relText .. "|r"
+    end
+    return table_concat(parts, " ")
 end
 
 -- ── Sort State ───────────────────────────────────────────────────────────
@@ -1851,6 +1887,14 @@ local FIXED_COLUMNS  = {
 }
 local COL_GOLD_LABEL = "Gold"
 local COL_GOLD_ALIGN = "LEFT"
+
+-- RaiderIO M+ profile tooltip (row hover overlay)
+-- Flags: MYTHIC_KEYSTONE(16) + PROFILE_TOOLTIP(128) + MOD_STICKY(8) +
+-- SHOW_HEADER(1024) + SHOW_PADDING(512) + SHOW_NAME(4096).
+local RIO_PROFILE_FLAGS       = 5784
+local RIO_TIP_ANCHOR          = "ANCHOR_NONE"
+local RIO_TIP_FALLBACK_ANCHOR = "ANCHOR_RIGHT"
+local RIO_TIP_EDGE_OFFSET_X   = -1 -- tooltip sits just left of the window edge
 
 -- Build the ordered list of numeric columns to render: fixed ilvl/vault
 -- columns, then visible currency columns (sorted by display name), then
@@ -2117,11 +2161,13 @@ local function BuildColumnHeader(parent, yOffset, widths, numericCols)
     -- the nearest edge (before first or after last) so the user can
     -- always drop.
     row:SetScript("OnUpdate", function()
-        if IsLockedDown() then return end
+        -- Idle fast path: a single local nil-check per frame. Lockdown
+        -- and cursor hit-testing below run only while a drag is active.
         if not _draggingCurrencyID then
             if dropEdge:IsShown() then dropEdge:Hide() end
             return
         end
+        if IsLockedDown() then return end
         if #currencyBtns == 0 then return end
         -- GetCursorPosition() returns raw screen pixels; frame GetLeft()/
         -- GetRight()/GetCenter() return coordinates scaled by the frame's
@@ -2204,7 +2250,46 @@ local function MeasureString(fs, text)
     return fs:GetStringWidth() or 0
 end
 
-local function BuildCharRow(parent, yOffset, rowData, idx, widths, numericCols)
+-- Cap-progress color for a currency quantity cell: the closer-to-cap of
+-- the weekly and seasonal progress. Shared by the full row builder and
+-- the fast-path in-place refresh in Render.
+local function CurrencyQtyColor(c, Theme)
+    local qty            = c and c.qty or 0
+    local weekQty        = c and c.weekQty or 0
+    local weekMax        = c and c.weekMax or 0
+    local canWeekly      = c and c.canWeekly or false
+    local maxQty         = c and c.max or 0
+    local totalEarned    = c and c.totalEarned or 0
+    local useTotalEarned = c and c.useTotalEarned or false
+    local weekPct = 0
+    if canWeekly and weekMax > 0 then
+        weekPct = (weekQty / weekMax) * 100
+    end
+    local capPct = 0
+    if maxQty > 0 then
+        if useTotalEarned then
+            capPct = (totalEarned / maxQty) * 100
+        else
+            capPct = (qty / maxQty) * 100
+        end
+    end
+    local percent = weekPct
+    if capPct > percent then percent = capPct end
+    --   >= 100  → currencyCap red (reached, even if partially spent)
+    --   >= 50   → yellow (near cap)
+    --   qty 0 and percent 0 → grey (none)
+    --   otherwise → white
+    if percent >= 100 then
+        return Theme.currencyCap
+    elseif percent >= 50 then
+        return Theme.yellow
+    elseif qty == 0 and percent == 0 then
+        return Theme.textMuted
+    end
+    return Theme.textPrimary
+end
+
+local function BuildCharRow(parent, yOffset, rowData, widths, numericCols)
     local Theme = T()
     local rowH = 26
     local row = CreateFrame("Frame", nil, parent)
@@ -2212,7 +2297,6 @@ local function BuildCharRow(parent, yOffset, rowData, idx, widths, numericCols)
     row:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -yOffset)
     row:SetPoint("TOPRIGHT", parent, "TOPRIGHT", 0, -yOffset)
     row:EnableMouse(true)
-    row.idx = idx
     row.rowData = rowData
     PaintRowBg(row, false)
 
@@ -2227,21 +2311,7 @@ local function BuildCharRow(parent, yOffset, rowData, idx, widths, numericCols)
     local cc = (rowData.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[rowData.class])
         or Theme.textPrimary
 
-    local parts = { rowData.name or "?" }
-    if rowData.realm and rowData.realm ~= "" then
-        parts[#parts + 1] = "|cff"
-            .. string.format("%02x%02x%02x",
-                Theme.textMuted[1] * 255, Theme.textMuted[2] * 255, Theme.textMuted[3] * 255)
-            .. "- " .. rowData.realm .. "|r"
-    end
-    local relText = RelTime(rowData.lastSeen)
-    if relText and relText ~= "" then
-        parts[#parts + 1] = "|cff"
-            .. string.format("%02x%02x%02x",
-                Theme.textSubtle[1] * 255, Theme.textSubtle[2] * 255, Theme.textSubtle[3] * 255)
-            .. "· " .. relText .. "|r"
-    end
-    local labelText = table.concat(parts, " ")
+    local labelText = BuildNameLabelText(rowData)
 
     local name = MakeFontString(row, "normal",
         { cc.r, cc.g, cc.b, 1 }, "LEFT", labelText)
@@ -2354,28 +2424,7 @@ local function BuildCharRow(parent, yOffset, rowData, idx, widths, numericCols)
             --   >= 50   → yellow (near cap)
             --   qty 0 and percent 0 → grey (none)
             --   otherwise → white
-            local weekPct = 0
-            if canWeekly and weekMax > 0 then
-                weekPct = (weekQty / weekMax) * 100
-            end
-            local capPct = 0
-            if maxQty > 0 then
-                if useTotalEarned then
-                    capPct = (totalEarned / maxQty) * 100
-                else
-                    capPct = (qty / maxQty) * 100
-                end
-            end
-            local percent = weekPct
-            if capPct > percent then percent = capPct end
-            local color = Theme.textPrimary
-            if percent >= 100 then
-                color = Theme.currencyCap
-            elseif percent >= 50 then
-                color = Theme.yellow
-            elseif qty == 0 and percent == 0 then
-                color = Theme.textMuted
-            end
+            local color = CurrencyQtyColor(c, Theme)
             cell = MakeFontString(row, "normal",
                 { color[1], color[2], color[3], 1 }, "CENTER", tostring(qty))
             -- Invisible Frame overlay so ANCHOR_TOP matches the vault
@@ -2446,23 +2495,22 @@ local function BuildCharRow(parent, yOffset, rowData, idx, widths, numericCols)
                 local _, winCY = win:GetCenter()
                 if rowCY and winCY then
                     GameTooltip:ClearAllPoints()
-                    GameTooltip:SetPoint("RIGHT", win, "LEFT", -1, rowCY - winCY)
+                    GameTooltip:SetPoint("RIGHT", win, "LEFT", RIO_TIP_EDGE_OFFSET_X, rowCY - winCY)
                     return true
                 end
                 return false
             end
             if RIO and RIO.ShowProfile and rowData.name and rowData.realm then
-                -- Flags: MYTHIC_KEYSTONE(16) + PROFILE_TOOLTIP(128) +
-                -- MOD_STICKY(8) + SHOW_HEADER(1024) + SHOW_PADDING(512) +
-                -- SHOW_NAME(4096) = 5784. Renders extended M+ profile
-                -- (per-dungeon runs) without raid progress or footer.
+                -- Renders the extended M+ profile (per-dungeon runs)
+                -- without raid progress or footer. Flag breakdown lives
+                -- on RIO_PROFILE_FLAGS above.
                 -- Realm names in RaiderIO's DB are stored without spaces
                 -- (e.g. "Area52"), so normalize.
                 local realm = rowData.realm:gsub("%s", "")
-                GameTooltip:SetOwner(self, "ANCHOR_NONE")
+                GameTooltip:SetOwner(self, RIO_TIP_ANCHOR)
                 GameTooltip:ClearLines()
                 local ok, success = pcall(RIO.ShowProfile, GameTooltip,
-                    rowData.name, realm, 5784)
+                    rowData.name, realm, RIO_PROFILE_FLAGS)
                 if ok and success then
                     AnchorTip()
                     return
@@ -2471,14 +2519,14 @@ local function BuildCharRow(parent, yOffset, rowData, idx, widths, numericCols)
             end
             -- Fallback: plain score tooltip (RaiderIO not installed or
             -- character not found in its database)
-            GameTooltip:SetOwner(self, "ANCHOR_NONE")
+            GameTooltip:SetOwner(self, RIO_TIP_ANCHOR)
             GameTooltip:ClearLines()
             GameTooltip:AddLine("Mythic+ Score", 1, 0.85, 0)
             local sc = GetMythicPlusScoreColor(score)
             GameTooltip:AddDoubleLine("Score", tostring(score),
                 1, 1, 1, sc[1], sc[2], sc[3])
             if not AnchorTip() then
-                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetOwner(self, RIO_TIP_FALLBACK_ANCHOR)
             end
             GameTooltip:Show()
         end)
@@ -2512,25 +2560,9 @@ end
 -- Realm is the longest realistic realm name; time-ago is the longest
 -- timestamp we ever produce ("99d ago" / "99mo ago" / "just now" /
 -- "never" — "just now" at fontSizeNormal is the longest by ~6px).
-local function PreviewNameText(Theme, rowData)
-    local cc = (rowData.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[rowData.class])
-        or Theme.textPrimary
-    -- Cheap: just produce the styled string the same way BuildCharRow does.
-    local parts = { rowData.name or "?" }
-    if rowData.realm and rowData.realm ~= "" then
-        parts[#parts + 1] = "|cff"
-            .. string.format("%02x%02x%02x",
-                Theme.textMuted[1] * 255, Theme.textMuted[2] * 255, Theme.textMuted[3] * 255)
-            .. "- " .. rowData.realm .. "|r"
-    end
-    local relText = RelTime(rowData.lastSeen)
-    if relText and relText ~= "" then
-        parts[#parts + 1] = "|cff"
-            .. string.format("%02x%02x%02x",
-                Theme.textSubtle[1] * 255, Theme.textSubtle[2] * 255, Theme.textSubtle[3] * 255)
-            .. "· " .. relText .. "|r"
-    end
-    return table.concat(parts, " ")
+local function PreviewNameText(rowData)
+    -- Cheap: reuse the exact styled string the rows render.
+    return BuildNameLabelText(rowData)
 end
 
 -- Pre-render measurement: walk the column list and the character rows
@@ -2562,7 +2594,7 @@ local function MeasureColumnWidths(rows, numericCols)
     -- Name column: longest styled name + realm + timestamp preview.
     local maxName  = MeasureString(headerFs, "Character")
     for _, r in ipairs(rows) do
-        local w = MeasureString(nameFs, PreviewNameText(Theme, r))
+        local w = MeasureString(nameFs, PreviewNameText(r))
         if w > maxName then maxName = w end
     end
 
@@ -2660,18 +2692,102 @@ local function FitWindowToContent(bodyHeight, totalTableWidth)
     frame._lastH = desiredH
 end
 
+-- ── Render Recycling ─────────────────────────────────────────────────
+-- A full Render destroys and recreates every row frame; PLAYER_MONEY and
+-- CURRENCY_DISPLAY_UPDATE fire often but only change gold/currency
+-- values. When the row set/order, column set/order, measured widths,
+-- sort state, and all other values match the last full build, the
+-- high-churn cells (gold, currency qty/color, name timestamps, footer
+-- total) are refreshed in place instead.
+local function VaultFingerprint(vault)
+    if type(vault) ~= "table" then return "-" end
+    local parts = { vault.availableRewards and "1" or "0" }
+    for _, key in ipairs({ "raid", "mp", "world" }) do
+        local slots = vault[key]
+        if type(slots) == "table" then
+            for _, s in ipairs(slots) do
+                if type(s) == "table" then
+                    parts[#parts + 1] = (s.progress or 0) .. "/" .. (s.threshold or 0)
+                        .. "/" .. (s.ilvl or 0) .. "/" .. (s.qColor or "")
+                else
+                    parts[#parts + 1] = "-"
+                end
+            end
+        else
+            parts[#parts + 1] = "x"
+        end
+    end
+    return table_concat(parts, ",")
+end
+
+-- Values the fast path does not rebuild (class/ilvl/score/vault need new
+-- colors or widths when they change). Gold, currencies, and lastSeen are
+-- excluded: UpdateGold bumps lastSeen on every PLAYER_MONEY, and the fast
+-- path refreshes name timestamps alongside the gold/currency texts.
+local function StaticValuesSig(rows)
+    local parts = {}
+    for _, r in ipairs(rows) do
+        parts[#parts + 1] = (r.name or "?") .. "|" .. (r.realm or "") .. "|"
+            .. (r.class or "") .. "|" .. (r.ilvl or 0) .. "|" .. (r.mplus or 0)
+            .. "|" .. VaultFingerprint(r.vault)
+    end
+    return table_concat(parts, "\n")
+end
+
+local function StructureSig(rows, numericCols, widths)
+    local parts = {}
+    for _, r in ipairs(rows) do parts[#parts + 1] = r.guid or "?" end
+    parts[#parts + 1] = "#"
+    for _, nc in ipairs(numericCols) do parts[#parts + 1] = nc.key end
+    parts[#parts + 1] = "#"
+    parts[#parts + 1] = widths.name .. "/" .. widths.total
+    for _, w in ipairs(widths.numeric) do parts[#parts + 1] = tostring(w) end
+    parts[#parts + 1] = "#"
+    parts[#parts + 1] = (_sortKey or "-") .. (_sortDir or "-")
+    return table_concat(parts, ",")
+end
+
+-- In-place refresh of the high-churn value cells. Returns false if any
+-- expected frame is missing (caller falls back to a full rebuild).
+local function RefreshValueCells(self, rows, numericCols, totalGold)
+    local Theme = T()
+    local frames = self._rowFrames
+    if type(frames) ~= "table" then return false end
+    for _, rowData in ipairs(rows) do
+        local frame = frames[rowData.guid]
+        if not frame then return false end
+        if frame.nameText then
+            frame.nameText:SetText(BuildNameLabelText(rowData))
+        end
+        for _, nc in ipairs(numericCols) do
+            if nc.key == COL_GOLD_KEY then
+                local cell = frame[nc.key]
+                if not cell then return false end
+                cell:SetText(BreakUpLargeNumbers(rowData.gold or 0) .. GOLD_ICON)
+            elseif nc.currencyID then
+                local cell = frame[nc.key]
+                if not cell then return false end
+                local c = rowData.currencies and rowData.currencies[tostring(nc.currencyID)]
+                local qty = c and c.qty or 0
+                cell:SetText(tostring(qty))
+                local color = CurrencyQtyColor(c, Theme)
+                cell:SetTextColor(color[1], color[2], color[3], 1)
+            end
+        end
+    end
+    local warbankGold = (addon.db and addon.db.characterViewer and addon.db.characterViewer.warbankGold) or 0
+    if self.footer and self.footer.totalGoldLabel then
+        self.footer.totalGoldLabel:SetText(BreakUpLargeNumbers(totalGold + warbankGold) .. GOLD_ICON)
+    end
+    return true
+end
+
 function module.UI:Render()
     if IsLockedDown() then return end
     if not self.frame then self:Build() end
     local Theme = T()
     local body = self.body
     if not body then return end
-
-    -- Clear existing children
-    for _, child in ipairs({ body:GetChildren() }) do
-        child:Hide()
-        child:SetParent(nil)
-    end
 
     local db = addon.db and addon.db.characterViewer
     local chars = (db and db.chars) or {}
@@ -2691,6 +2807,24 @@ function module.UI:Render()
     -- up on the first paint, then lay everything out.
     local numericCols, totalGold = BuildNumericColumnList()
     local widths = MeasureColumnWidths(rows, numericCols)
+    SortRows(rows)
+
+    -- Fast path: rows, columns, widths, and static values all match the
+    -- last full build — refresh only the high-churn value cells in place.
+    if self._rowFrames
+        and StructureSig(rows, numericCols, widths) == self._structSig
+        and StaticValuesSig(rows) == self._staticSig
+        and RefreshValueCells(self, rows, numericCols, totalGold) then
+        return
+    end
+
+    -- Clear existing children
+    for _, child in ipairs({ body:GetChildren() }) do
+        child:Hide()
+        child:SetParent(nil)
+    end
+    self._rowFrames = {}
+
     local _, headerH = BuildColumnHeader(body, yOffset, widths, numericCols)
     yOffset = yOffset + headerH + 4
 
@@ -2699,9 +2833,9 @@ function module.UI:Render()
             "No character data yet. Log in on a character with Character Viewer enabled.")
         yOffset = yOffset + eh
     else
-        SortRows(rows)
-        for i, rowData in ipairs(rows) do
-            local _, rh = BuildCharRow(body, yOffset, rowData, i, widths, numericCols)
+        for _, rowData in ipairs(rows) do
+            local rowFrame, rh = BuildCharRow(body, yOffset, rowData, widths, numericCols)
+            self._rowFrames[rowData.guid] = rowFrame
             yOffset = yOffset + rh + 2
         end
     end
@@ -2715,6 +2849,8 @@ function module.UI:Render()
     if self.footer and self.footer.totalGoldLabel then
         self.footer.totalGoldLabel:SetText(BreakUpLargeNumbers(displayGold) .. GOLD_ICON)
     end
+    self._structSig = StructureSig(rows, numericCols, widths)
+    self._staticSig = StaticValuesSig(rows)
 end
 
 -- ════════════════════════════════════════════════════════════════════════════════
@@ -2732,7 +2868,7 @@ end
 function module.UI:SetScale(scale)
     if IsLockedDown() then return end
     local db = addon.db and addon.db.characterViewer
-    scale = math.max(0.5, math.min(1.5, tonumber(scale) or 1.0))
+    scale = math.max(SCALE_MIN, math.min(SCALE_MAX, tonumber(scale) or 1.0))
     if db then db.scale = scale end
     if self.frame then self.frame:SetScale(scale) end
 end
@@ -2783,6 +2919,11 @@ function module:OnInitialize()
             if module.UI.frame then module.UI.frame:Hide() end
             return
         end
+        if event == "PLAYER_REGEN_ENABLED" then
+            -- Retry an OnEnable that was deferred by combat lockdown.
+            if _pendingEnable then module:OnEnable() end
+            return
+        end
         if IsLockedDown() then return end
         if event == "PLAYER_LOGIN" then
             SnapshotCurrent(true)
@@ -2800,6 +2941,10 @@ function module:OnInitialize()
                 SnapshotCurrent()
                 RefreshAfterChange()
             end
+        elseif event == "BINDINGS_LOADED" then
+            -- Bindings may load after the footer was built; refresh the key text.
+            local footer = module.UI and module.UI.footer
+            if footer and footer.bindLabel then SetBindLabelText(footer.bindLabel) end
         elseif event == "WEEKLY_REWARDS_UPDATE" or event == "CHALLENGE_MODE_COMPLETED" then
             SnapshotCurrent(true)
             RefreshAfterChange()
@@ -2807,7 +2952,9 @@ function module:OnInitialize()
             -- Capture warbank gold when the player visits the bank
             if C_Bank and Enum_BankType_Account then
                 local ok, money = pcall(C_Bank.FetchDepositedMoney, Enum_BankType_Account)
-                if ok and type(money) == "number" and money > 0 then
+                -- Nil-guard (not >0): an emptied warbank must overwrite the
+                -- stored balance with 0 instead of keeping a stale value.
+                if ok and money ~= nil and type(money) == "number" then
                     local db = addon.db and addon.db.characterViewer
                     if db then
                         db.warbankGold = math.floor(money / 10000)
@@ -2833,8 +2980,20 @@ function module:OnInitialize()
 end
 
 function module:OnEnable()
-    if IsLockedDown() then return end
+    -- The event holder may not exist if OnInitialize ran before this
+    -- module was first enabled; retry it now (safe outside combat).
+    if not holder then module:OnInitialize() end
+    if IsLockedDown() then
+        -- Combat lockdown: defer event registration and retry when
+        -- combat ends instead of leaving the module inert.
+        _pendingEnable = true
+        if holder then holder:RegisterEvent("PLAYER_REGEN_ENABLED") end
+        return
+    end
     if not holder then return end
+    _pendingEnable = false
+    if not toggleButton then BuildToggleButton() end
+    holder:UnregisterEvent("PLAYER_REGEN_ENABLED")
     holder:RegisterEvent("PLAYER_LOGIN")
     holder:RegisterEvent("PLAYER_ENTERING_WORLD")
     holder:RegisterEvent("PLAYER_REGEN_DISABLED")
@@ -2844,6 +3003,7 @@ function module:OnEnable()
     holder:RegisterEvent("WEEKLY_REWARDS_UPDATE")
     holder:RegisterEvent("CHALLENGE_MODE_COMPLETED")
     holder:RegisterEvent("BANKFRAME_OPENED")
+    holder:RegisterEvent("BINDINGS_LOADED")
 end
 
 function module:OnDisable()

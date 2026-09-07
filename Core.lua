@@ -135,7 +135,6 @@ local defaultDB = {
     },
     -- ── Character Viewer defaults ──────────────────────────
     characterViewer = {
-        keybind = "",
         width = 720,
         height = 400,
         scale = 1.0,
@@ -172,6 +171,22 @@ local function DeepCopy(orig)
         copy = orig
     end
     return copy
+end
+
+-- Recursively fill missing keys from defaults (never prunes: dynamic keys
+-- written at runtime, e.g. TFQoLDB.global.fontFamily, must survive reloads)
+local function MergeDefaults(db, defaults)
+    for k, v in pairs(defaults) do
+        if db[k] == nil then
+            db[k] = DeepCopy(v)
+        elseif type(v) == "table" then
+            if type(db[k]) ~= "table" then
+                db[k] = DeepCopy(v)
+            else
+                MergeDefaults(db[k], v)
+            end
+        end
+    end
 end
 
 -- ── Module Registration ──────────────────────────────────────
@@ -219,6 +234,20 @@ function addon:SetModuleEnabled(name, enabled)
             module:OnDisable()
         end
     end
+end
+
+-- ── Binding Persistence ─────────────────────────────────────────
+
+-- Category header for Bindings.xml entries (set once here so the
+-- Key Bindings UI labels our bindings correctly)
+_G["BINDING_HEADER_TFQoL"] = "TF QoL"
+
+-- Safe SaveBindings wrapper (combat + existence guards) callable from any module
+function addon:SaveBindingsSafe()
+    if InCombatLockdown and InCombatLockdown() then return false end
+    if type(SaveBindings) ~= "function" then return false end
+    local set = GetCurrentBindingSet and GetCurrentBindingSet() or 2
+    return pcall(SaveBindings, set)
 end
 
 -- ── Global Test Mode Management ──────────────────────────────
@@ -274,49 +303,18 @@ f:SetScript("OnEvent", function(self, event, ...)
         if loadedAddon == addonName then
             self:UnregisterEvent("ADDON_LOADED")
 
-            -- Initialize DB
-            if not TFQoLDB then
+            -- Initialize DB (corrupt saves reset to defaults)
+            if type(TFQoLDB) ~= "table" then
                 TFQoLDB = DeepCopy(defaultDB)
             else
-                -- Migration: ensure any new modules added to defaultDB are enabled by default
-                for name, enabled in pairs(defaultDB.modules) do
-                    if TFQoLDB.modules[name] == nil then
-                        TFQoLDB.modules[name] = enabled
-                    end
+                -- Ensure the modules table exists before indexing it
+                if type(TFQoLDB.modules) ~= "table" then
+                    TFQoLDB.modules = DeepCopy(defaultDB.modules)
                 end
-                -- Remove stale modules no longer in defaultDB
-                for name, _ in pairs(TFQoLDB.modules) do
-                    if defaultDB.modules[name] == nil then
-                        TFQoLDB.modules[name] = nil
-                    end
-                end
-
-                -- Ensure all sub-tables exist and fill in any missing fields within them
-                for key, defaultValue in pairs(defaultDB) do
-                    if key ~= "modules" then
-                        if not TFQoLDB[key] then
-                            TFQoLDB[key] = DeepCopy(defaultValue)
-                        elseif type(defaultValue) == "table" then
-                            for field, fieldDefault in pairs(defaultValue) do
-                                if TFQoLDB[key][field] == nil then
-                                    TFQoLDB[key][field] = fieldDefault
-                                end
-                            end
-                            -- Remove stale fields from sub-tables
-                            for field, _ in pairs(TFQoLDB[key]) do
-                                if defaultValue[field] == nil then
-                                    TFQoLDB[key][field] = nil
-                                end
-                            end
-                        end
-                    end
-                end
-                -- Remove stale top-level keys no longer in defaultDB
-                for key, _ in pairs(TFQoLDB) do
-                    if defaultDB[key] == nil then
-                        TFQoLDB[key] = nil
-                    end
-                end
+                -- Migration: recursively fill any missing keys from defaults.
+                -- New modules default to their defaultDB state; no pruning so
+                -- dynamic runtime keys (e.g. global.fontFamily) are preserved.
+                MergeDefaults(TFQoLDB, defaultDB)
             end
 
             addon.db = TFQoLDB

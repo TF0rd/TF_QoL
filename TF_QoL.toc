@@ -6,6 +6,7 @@
 ## SavedVariables: TFQoLDB
 ## IconTexture: Interface\AddOns\TF_QoL\Media\Icon.tga
 ## Category: Quality of Life
+## OptionalDeps: LibSharedMedia-3.0
 
 # ── Core ────────────────────────────────────────────────────────
 Core.lua
@@ -18,12 +19,12 @@ GUI\Widgets\Toggle.lua
 GUI\Widgets\Slider.lua
 GUI\Widgets\Dropdown.lua
 GUI\Widgets\ScrollList.lua
-GUI\Widgets\Keybind.lua
 GUI\MainFrame.lua
 GUI\Sidebar.lua
 
 # ── Modules ─────────────────────────────────────────────────────
 Modules\SharedActionBars.lua
+Modules\AlertCore.lua
 Modules\PotionAlert.lua
 Modules\LustAlert.lua
 Modules\StealthIndicator.lua

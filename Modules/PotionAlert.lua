@@ -6,21 +6,8 @@
 -- ════════════════════════════════════════════════════════════════
 
 local _, addon = ...
-local module = {}
 
-local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
-
-local frame = CreateFrame("Frame", "TFQoL_PotionAlertFrame", UIParent)
-frame:SetPoint("CENTER", 0, -70)
-frame:SetSize(16, 16)
-frame:Hide()
-
-frame.text = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-frame.text:SetPoint("CENTER")
-frame.text:SetTextColor(0.1176, 1.0, 0.0, 1.0) -- #1EFF00
-frame.text:SetText("Potion Ready")
-frame.text:SetShadowOffset(0, 0)
-frame.text:SetShadowColor(0, 0, 0, 0)
+-- ── Local constants ──────────────────────────────────────────
 
 -- Endgame combat potion item IDs
 local combatPotions = {
@@ -34,130 +21,48 @@ local combatPotions = {
     245902, 245903,                 -- Midnight: Fleeting Potion of Recklessness
 }
 
-local cooldownEventsActive = false
-local testModeActive       = false
-local moduleEnabled        = false
+-- ── Helper functions ─────────────────────────────────────────
 
-local eventFrame = CreateFrame("Frame")
-
--- ── PRIVATE HELPERS ───────────────────────────────────────────
-
-local function ShouldBeActive(event)
-    local db = TFQoLDB.potionAlert
-
-    local inCombat = InCombatLockdown() or (event == "PLAYER_REGEN_DISABLED")
-    if (db.onlyCombat == true) and not inCombat then return false end
-
-    local inInstance, instanceType = IsInInstance()
-    if instanceType == "party" and not (db.showInDungeons == true) then return false end
-    if instanceType == "raid"  and not (db.showInRaids    == true) then return false end
-    if (not inInstance or instanceType == "scenario") and not (db.showInOpenWorld == true) then return false end
-
-    return true
-end
-
-local function ScanPotionCooldowns()
-    if testModeActive then return end
-
+-- True when a carried potion is off cooldown, false when none is, nil when
+-- cooldown reads are secret-restricted (M+/raid/PvP) so the factory keeps
+-- the current display state instead of comparing secret values.
+local function ScanPotions()
     for _, itemID in ipairs(combatPotions) do
         local count = C_Item.GetItemCount(itemID)
+        if addon:IsSecretValue(count) then return nil end
         if count and count > 0 then
-            local start = C_Container.GetItemCooldown(itemID)
-            if start == 0 then
-                if not frame:IsVisible() then
-                    local db = TFQoLDB.potionAlert
-                    if db.playSound and db.soundName and db.soundName ~= "None" and LSM then
-                        local path = LSM:Fetch("sound", db.soundName)
-                        if path then PlaySoundFile(path, "Master") end
-                    end
-                end
-                frame:Show()
-                return
-            end
+            local start, duration = C_Container.GetItemCooldown(itemID)
+            if addon:IsSecretValue(start) or addon:IsSecretValue(duration) then return nil end
+            if start == 0 then return true end
         end
     end
-    frame:Hide()
+    return false
 end
 
-local function EvaluateState(event)
-    if testModeActive then return end
-
-    if ShouldBeActive(event) then
-        cooldownEventsActive = true
-        ScanPotionCooldowns()
-    else
-        cooldownEventsActive = false
-        frame:Hide()
-    end
-end
-
--- ── FONT RENDERING ────────────────────────────────────────────
-
-function module:UpdateFont()
-    local db = TFQoLDB.potionAlert
-    local flags = (TFQoLDB.global.slugRendering == true) and "OUTLINE,SLUG" or "OUTLINE"
-    frame.text:SetFont(addon:ResolveFont(db.fontFamily), db.fontSize, flags)
-end
-
--- ── POSITION ──────────────────────────────────────────────────
-
-function module:UpdatePosition()
-    addon:ApplyPosition(frame, TFQoLDB.potionAlert)
-end
-
--- ── TEST MODE ─────────────────────────────────────────────────
-
-function module:SetTestMode(enabled)
-    testModeActive = enabled
-    if enabled then
-        frame:Show()
-    else
-        frame:Hide()
-        EvaluateState()
-    end
-end
-
-function module:IsTestMode()
-    return testModeActive
-end
-
--- ── EVENT HANDLING ────────────────────────────────────────────
-
-local function OnEvent(_, event)
+-- Cooldown events rescan; everything else re-evaluates visibility.
+local function RescanFilter(event)
     if event == "BAG_UPDATE_COOLDOWN" or event == "SPELL_UPDATE_COOLDOWN" then
-        if cooldownEventsActive then ScanPotionCooldowns() end
-    else
-        EvaluateState(event)
+        return "rescan"
     end
+    return "evaluate"
 end
 
-function module:ForceCheck()
-    if not moduleEnabled then return end
-    EvaluateState()
-end
+-- ── Module lifecycle ─────────────────────────────────────────
 
--- ── MODULE LIFECYCLE ──────────────────────────────────────────
-
-function module:OnEnable()
-    self:UpdateFont()
-    self:UpdatePosition()
-    eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-    eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
-    eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-    eventFrame:RegisterEvent("ENCOUNTER_END")
-    eventFrame:RegisterEvent("BAG_UPDATE_COOLDOWN")
-    eventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
-    eventFrame:SetScript("OnEvent", OnEvent)
-    moduleEnabled = true
-    EvaluateState()
-end
-
-function module:OnDisable()
-    moduleEnabled = false
-    eventFrame:UnregisterAllEvents()
-    frame:Hide()
-    cooldownEventsActive = false
-    testModeActive = false
-end
+local module = addon:CreateIndicatorAlert("PotionAlert", {
+    dbKey = "potionAlert",
+    frameName = "TFQoL_PotionAlertFrame",
+    text = "Potion Ready",
+    scanFn = ScanPotions,
+    rescanEventFilter = RescanFilter,
+    events = {
+        "PLAYER_ENTERING_WORLD",
+        "PLAYER_REGEN_DISABLED",
+        "PLAYER_REGEN_ENABLED",
+        "ENCOUNTER_END",
+        "BAG_UPDATE_COOLDOWN",
+        "SPELL_UPDATE_COOLDOWN",
+    },
+})
 
 addon:RegisterModule("PotionAlert", module)

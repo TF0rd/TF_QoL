@@ -325,3 +325,189 @@ function GUIFrame:AddVisibilityCard(scrollChild, yOffset, dbKey)
     yOffset = yOffset + card:GetContentHeight() + Theme.paddingLarge
     return yOffset
 end
+
+-- ════════════════════════════════════════════════════════════════════════════════
+-- Part 6: Module Catalog (Single source for sidebar sections + Home status)
+-- ════════════════════════════════════════════════════════════════════════════════
+
+-- Section order/grouping shared by the sidebar and the Home tab.
+GUIFrame.ModuleGroups = {
+    { key = "alerts",      id = "alerts_section",      text = "• Alerts",      label = "Alerts" },
+    { key = "qol",         id = "qol_section",         text = "• QoL",         label = "QoL" },
+    { key = "keybindings", id = "keybindings_section", text = "• Keybindings", label = "Keybindings" },
+    { key = "tools",       id = "tools_section",       text = "• Tools",       label = "Tools" },
+}
+
+-- One entry per module tab. `settings` names map to the Add*Card helpers
+-- above (visibility / font / position / sound); tabs with bespoke layouts
+-- leave it nil and build their own cards.
+GUIFrame.ModuleCatalog = {
+    { id = "PotionAlert",         label = "Potion Alert",          group = "alerts",
+      title = "Potion Alert",     dbKey = "potionAlert",
+      settings = { "visibility", "font", "position", "sound" },
+      about = "Reminds you to use a combat potion when one is available." },
+    { id = "LustAlert",           label = "Lust Alert",            group = "alerts",
+      title = "Lust Alert",       dbKey = "lustAlert",
+      settings = { "visibility", "font", "position", "sound" },
+      about = "Displays an alert when Bloodlust, Heroism, Time Warp, or an equivalent haste effect becomes active." },
+    { id = "SharedActionBars",    label = "Shared Action Bars",    group = "qol",
+      title = "Shared Action Bars",
+      about = "Locks all talent loadouts to shared action bars, preventing per-spec bar layouts." },
+    { id = "OCETag",              label = "OCE Group Tag",         group = "qol",
+      title = "OCE Group Tag",
+      about = "Flags Oceanic realm groups in the Premade Groups Finder with an |cFFFF4040[OCE]|r tag." },
+    { id = "GroupJoinedReminder", label = "Group Joined Reminder", group = "qol",
+      title = "Group Joined Reminder",
+      about = "Prints a chat message when you join a Mythic+ or Mythic raid group via the Premade Groups Finder." },
+    { id = "ItemUpgradeReminder", label = "Item Upgrade Reminder", group = "qol",
+      title = "Item Upgrade Reminder", dbKey = "itemUpgradeReminder",
+      settings = { "font", "position" },
+      about = "Prints a chat message for each equipped item that can be upgraded to a higher item level for gold only (no crests required), based on your character's and account's high-watermark for that slot." },
+    { id = "StealthIndicator",    label = "Stealth Indicator",     group = "qol",
+      title = "Stealth Indicator", dbKey = "stealthIndicator",
+      settings = { "font", "position" },
+      about = "Displays a text indicator on screen when you are in stealth." },
+    { id = "BlizzardFrames",      label = "Blizzard Frames",       group = "qol",
+      title = "Blizzard Frames",
+      about = "Hide Blizzard UI elements and reposition panel frames via click+drag." },
+    { id = "ActionBarToggle",     label = "Action Bar Toggle",     group = "keybindings",
+      title = "Action Bar Toggle",
+      about = "Toggle visibility of action bars with a keybind. Great for screenshots, cinematics, or a cleaner UI." },
+    { id = "MountActions",        label = "Mount Actions",         group = "keybindings",
+      title = "Mount Actions",
+      about = "Bind keys to summon your Repair or Auction House mount." },
+    { id = "ConsumableMacros",    label = "Macros",                group = "keybindings",
+      title = "Macros",
+      about = "Auto-updating macros for Health Potions and Drinks, plus a Power Infusion target helper." },
+    { id = "CVarBrowser",         label = "CVar Browser",          group = "tools",
+      title = "CVar Browser",
+      about = "Browse and modify all game CVars. Values shown in red are non-default." },
+    { id = "CharacterViewer",     label = "Character Viewer",      group = "tools",
+      title = "Character Viewer",
+      about = "Snapshots current character on login. Shows ilvl, Great Vault, currencies, and gold for all known characters." },
+    { id = "MuteSounds",          label = "Mute Sounds",           group = "tools",
+      title = "Mute Sounds",
+      about = "Mute specific game sounds by sound file ID. Toggle preset categories or add custom sound IDs to mute. Changes apply immediately." },
+}
+
+-- Rebuild the sidebar tree from the catalog so Sidebar + Home stay in sync.
+GUIFrame.SidebarConfig = (function()
+    local config = { modules = { { id = "Home", type = "item", text = "Home" } } }
+    for _, group in ipairs(GUIFrame.ModuleGroups) do
+        local items = {}
+        for _, mod in ipairs(GUIFrame.ModuleCatalog) do
+            if mod.group == group.key then
+                items[#items + 1] = { id = mod.id, text = mod.label }
+            end
+        end
+        config.modules[#config.modules + 1] = {
+            id = group.id, type = "header", text = group.text,
+            defaultExpanded = true, items = items,
+        }
+    end
+    return config
+end)()
+
+-- ════════════════════════════════════════════════════════════════════════════════
+-- Part 7: Shared Cards (About, keybind display, action button, settings sets)
+-- ════════════════════════════════════════════════════════════════════════════════
+
+-- ── FormatKeyDisplay ─────────────────────────────────────────────────────
+
+function GUIFrame:FormatKeyDisplay(key)
+    if not key or key == "" then
+        return "|cff" .. addon.Theme.yellowHex .. "Not Bound|r"
+    end
+    return (key:gsub("-", "+"))
+end
+
+-- ── AddAboutCard ─────────────────────────────────────────────────────────
+
+function GUIFrame:AddAboutCard(scrollChild, yOffset, title, text)
+    local Theme = addon.Theme
+    local card = GUIFrame:CreateCard(scrollChild, title or "About", yOffset)
+    card:AddLabel(text or "")
+    return yOffset + card:GetContentHeight() + Theme.paddingLarge
+end
+
+-- ── AddActionButton ──────────────────────────────────────────────────────
+
+function GUIFrame:AddActionButton(parent, text, onClick, height)
+    local Theme = addon.Theme
+    local btn = CreateFrame("Button", nil, parent, "BackdropTemplate")
+    btn:SetHeight(height or 28)
+    btn:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        edgeSize = 1,
+    })
+    btn:SetBackdropColor(Theme.accent[1] * 0.3, Theme.accent[2] * 0.3, Theme.accent[3] * 0.3, 1)
+    btn:SetBackdropBorderColor(Theme.accent[1], Theme.accent[2], Theme.accent[3], 1)
+    btn:EnableMouse(true)
+    btn:RegisterForClicks("LeftButtonUp")
+
+    local label = btn:CreateFontString(nil, "OVERLAY")
+    label:SetPoint("CENTER")
+    addon:ApplyThemeFont(label, "small")
+    label:SetText(text)
+    label:SetTextColor(Theme.accent[1], Theme.accent[2], Theme.accent[3], 1)
+
+    btn:SetScript("OnEnter", function(self)
+        self:SetBackdropColor(Theme.accent[1] * 0.5, Theme.accent[2] * 0.5, Theme.accent[3] * 0.5, 1)
+        label:SetTextColor(1, 1, 1, 1)
+    end)
+    btn:SetScript("OnLeave", function(self)
+        self:SetBackdropColor(Theme.accent[1] * 0.3, Theme.accent[2] * 0.3, Theme.accent[3] * 0.3, 1)
+        label:SetTextColor(Theme.accent[1], Theme.accent[2], Theme.accent[3], 1)
+    end)
+    btn:SetScript("OnClick", function()
+        if onClick then onClick() end
+    end)
+
+    return btn
+end
+
+-- ── AddKeybindCard ───────────────────────────────────────────────────────
+-- entries: array of { label, key }; read-only display plus a guarded
+-- button that opens WoW's Key Bindings panel.
+
+function GUIFrame:AddKeybindCard(scrollChild, yOffset, title, entries, helpText)
+    local Theme = addon.Theme
+    local card = GUIFrame:CreateCard(scrollChild, title or "Keybind", yOffset)
+    for _, entry in ipairs(entries or {}) do
+        local line = card:AddLabel((entry.label or "Key") .. ": " .. GUIFrame:FormatKeyDisplay(entry.key))
+        line:SetTextColor(Theme.textPrimary[1], Theme.textPrimary[2], Theme.textPrimary[3], 1)
+    end
+    local openBtn = GUIFrame:AddActionButton(card.content, "Open Keybindings Settings", function()
+        if InCombatLockdown() then
+            print("|cff" .. Theme.errorHex .. "TF_QoL|r Keybindings cannot be opened in combat.")
+            return
+        end
+        if Settings and Settings.OpenToCategory and Settings.KEYBINDINGS_CATEGORY_ID then
+            Settings.OpenToCategory(Settings.KEYBINDINGS_CATEGORY_ID, BINDING_HEADER_TFQoL)
+        end
+    end, 28)
+    card:AddRow(openBtn, 28)
+    card:AddLabel(helpText or "Set keybinds in WoW's Key Bindings panel (ESC > Options > Keybindings).")
+    return yOffset + card:GetContentHeight() + Theme.paddingLarge
+end
+
+-- ── AddModuleSettingsCards ───────────────────────────────────────────────
+-- Data-driven settings set: names map to the Part 2-5 card builders.
+
+local SETTINGS_CARD_METHODS = {
+    visibility = "AddVisibilityCard",
+    font       = "AddFontCard",
+    position   = "AddPositionCard",
+    sound      = "AddSoundCard",
+}
+
+function GUIFrame:AddModuleSettingsCards(scrollChild, yOffset, dbKey, cards)
+    for _, name in ipairs(cards or {}) do
+        local method = SETTINGS_CARD_METHODS[name]
+        if method and self[method] then
+            yOffset = self[method](self, scrollChild, yOffset, dbKey)
+        end
+    end
+    return yOffset
+end

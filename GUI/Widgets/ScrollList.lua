@@ -1,10 +1,11 @@
 -- ════════════════════════════════════════════════════════════════════════════════════
 -- Widget: ScrollList (Virtual-scrolling list with sortable column headers)
 -- Ported from AdvancedInterfaceOptions/semlib/widgets.lua
--- Usage: addon:CreateScrollList(parent, w, h, cols)
+-- Usage: GUIFrame:CreateScrollList(parent, w, h, cols)
 -- ════════════════════════════════════════════════════════════════════════════════════
 
 local _, addon = ...
+local GUIFrame = addon.GUIFrame
 
 -- ════════════════════════════════════════════════════════════════════════════════════
 -- Part 1: Locals
@@ -24,7 +25,7 @@ local gsub   = gsub
 
 -- ── Create a FontString for a cell ──────────────────────────────────────────────────
 
-local function localCreateString(parent, text, width, justify)
+local function createCellString(parent, text, width, justify)
     local str = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmallLeft")
     str:SetText(text or "")
     str:SetWordWrap(false)
@@ -38,7 +39,7 @@ end
 
 -- ── Update visible slot contents from items table ───────────────────────────────────
 
-local function updatescroll(scroll)
+local function updateScroll(scroll)
     for line = 1, scroll.slots do
         local lineoffset = line + scroll.value
         if lineoffset <= scroll.itemcount then
@@ -82,7 +83,7 @@ end
 
 -- ── Apply scripts to all slots ──────────────────────────────────────────────────────
 
-local function scrollscripts(scroll, scripts)
+local function setScrollScripts(scroll, scripts)
     for k, v in pairs(scripts) do
         scroll.scripts[k] = v
     end
@@ -148,7 +149,7 @@ end
 
 -- ── Set items and reset scroll position ─────────────────────────────────────────────
 
-local function setscrolllist(scroll, items)
+local function setScrollList(scroll, items)
     scroll.items = items
     scroll.itemcount = #items
     scroll.stepValue = min(ceil(scroll.slots / 2), max(floor(scroll.itemcount / scroll.slots), 1))
@@ -192,7 +193,7 @@ end
 -- cols: array of { name, width [, justify] }
 -- ════════════════════════════════════════════════════════════════════════════════════
 
-function addon:CreateScrollList(parent, w, h, cols)
+function GUIFrame:CreateScrollList(parent, w, h, cols)
     local Theme = addon.Theme
 
     local frame = CreateFrame("Frame", nil, parent, "BackdropTemplate")
@@ -220,10 +221,10 @@ function addon:CreateScrollList(parent, w, h, cols)
     frame:EnableMouseWheel(true)
     frame:SetScript("OnMouseWheel", scroll)
 
-    frame.Update    = updatescroll
-    frame.SetItems  = setscrolllist
+    frame.Update    = updateScroll
+    frame.SetItems  = setScrollList
     frame.SortBy    = sortItems
-    frame.SetScripts = scrollscripts
+    frame.SetScripts = setScrollScripts
 
     -- ── Scrollbar Background Textures ─────────────────────────────────────────────
 
@@ -301,7 +302,7 @@ function addon:CreateScrollList(parent, w, h, cols)
         f:SetHeight(frame.itemheight)
 
         for i, col in ipairs(frame.cols) do
-            local str = localCreateString(f, "x")
+            local str = createCellString(f, "x")
             str:SetPoint("LEFT", col.offset, 0)
             str:SetWidth(col.width)
             if col.justify then str:SetJustifyH(col.justify) end

@@ -248,15 +248,18 @@ function GUIFrame:CreateCheckbox(parent, labelText, initialState, onValueChanged
     toggle.GetValue = function() return state end
 
     function row:SetEnabled(enabled)
-        if enabled then
-            toggle:SetAlpha(1)
-            label:SetAlpha(1)
-            button:EnableMouse(true)
-        else
-            toggle:SetAlpha(0.5)
-            label:SetAlpha(0.5)
-            button:EnableMouse(false)
-        end
+        local alpha = enabled and 1 or addon.Theme.disabledAlpha
+        toggle:SetAlpha(alpha)
+        label:SetAlpha(alpha)
+        button:EnableMouse(enabled)
+    end
+
+    function row:SetValue(value, instant)
+        toggle:SetValue(value, instant)
+    end
+
+    function row:GetValue()
+        return toggle:GetValue()
     end
 
     row.toggle = toggle

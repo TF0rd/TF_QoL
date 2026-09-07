@@ -19,18 +19,9 @@ local AH_BINDING         = "CLICK " .. AH_BUTTON_NAME .. ":LeftButton"
 local REPAIR_MOUNT_SPELLS = { 457485, 122708, 61425, 61447 }
 local AH_MOUNT_SPELLS     = { 264058, 465235 }
 
--- ── Binding safety ────────────────────────────────────────────
-
-local bindingsLoaded = false
-
-local function SafeSaveBindings()
-    if not bindingsLoaded then return end
-    SaveBindings(GetCurrentBindingSet())
-end
-
 -- ── WoW Key Bindings UI registration ──────────────────────────
-
-_G["BINDING_HEADER_TFQoL"] = "TF QoL"
+-- (BINDING_HEADER_TFQoL is set once in Core.lua; the BINDING_NAME lines
+-- below label this module's bindings. Bindings.xml provides the category.)
 _G["BINDING_NAME_CLICK " .. REPAIR_BUTTON_NAME .. ":LeftButton"] = "Repair Mount"
 _G["BINDING_NAME_CLICK " .. AH_BUTTON_NAME .. ":LeftButton"]     = "Auction House Mount"
 
@@ -155,7 +146,15 @@ local eventFrame
 
 local function OnEvent(self, event, ...)
     if event == "BINDINGS_LOADED" then
-        bindingsLoaded = true
+        -- Binding table ready: sync SavedVariables from the standard
+        -- bindings (e.g. keys restored from the saved binding set).
+        local db = addon.db and addon.db.mountActions
+        if db then
+            local repairKey = GetBindingKey(REPAIR_BINDING)
+            if repairKey and repairKey ~= "" then db.repairKeybind = repairKey end
+            local ahKey = GetBindingKey(AH_BINDING)
+            if ahKey and ahKey ~= "" then db.ahKeybind = ahKey end
+        end
     end
 end
 
@@ -166,21 +165,34 @@ end
 function module:OnInitialize()
     eventFrame = CreateFrame("Frame")
     eventFrame:SetScript("OnEvent", OnEvent)
+    -- Session-scoped: registered once here (not OnEnable) so the binding
+    -- table is caught even if the module starts disabled.
+    eventFrame:RegisterEvent("BINDINGS_LOADED")
 
     repairButton = EnsureMountButton(REPAIR_BUTTON_NAME, REPAIR_MOUNT_SPELLS)
     ahButton     = EnsureMountButton(AH_BUTTON_NAME, AH_MOUNT_SPELLS)
 end
 
 function module:OnEnable()
-    eventFrame:RegisterEvent("BINDINGS_LOADED")
     repairButton = EnsureMountButton(REPAIR_BUTTON_NAME, REPAIR_MOUNT_SPELLS)
     ahButton = EnsureMountButton(AH_BUTTON_NAME, AH_MOUNT_SPELLS)
 end
 
 function module:OnDisable()
-    eventFrame:UnregisterAllEvents()
-    if repairButton then repairButton:SetScript("PreClick", nil); repairButton:Hide() end
-    if ahButton then ahButton:SetScript("PreClick", nil); ahButton:Hide() end
+    -- BINDINGS_LOADED stays registered for the session (see OnInitialize).
+    -- Clear stale macros so a lingering standard binding fires nothing.
+    if repairButton then
+        repairButton:SetScript("PreClick", nil)
+        repairButton:SetAttribute("macrotext", "")
+        repairButton:SetAttribute("macrotext1", "")
+        repairButton:Hide()
+    end
+    if ahButton then
+        ahButton:SetScript("PreClick", nil)
+        ahButton:SetAttribute("macrotext", "")
+        ahButton:SetAttribute("macrotext1", "")
+        ahButton:Hide()
+    end
 end
 
 -- ════════════════════════════════════════════════════════════════
@@ -199,9 +211,9 @@ function module:SetRepairKey(key)
     local oldKey = GetBindingKey(REPAIR_BINDING)
     if oldKey then SetBinding(oldKey, nil) end
     if key and key ~= "" then SetBinding(key, REPAIR_BINDING) end
-    SafeSaveBindings()
     local db = addon.db and addon.db.mountActions
     if db then db.repairKeybind = key or "" end
+    addon:SaveBindingsSafe()
 end
 
 function module:GetAHKey()
@@ -216,9 +228,9 @@ function module:SetAHKey(key)
     local oldKey = GetBindingKey(AH_BINDING)
     if oldKey then SetBinding(oldKey, nil) end
     if key and key ~= "" then SetBinding(key, AH_BINDING) end
-    SafeSaveBindings()
     local db = addon.db and addon.db.mountActions
     if db then db.ahKeybind = key or "" end
+    addon:SaveBindingsSafe()
 end
 
 addon:RegisterModule("MountActions", module)
