@@ -219,8 +219,10 @@ module.SoundCategories = {
     },
 }
 
--- ── Build flat lookup: soundId -> list of db keys that reference it ─
+-- ── Build flat lookup: soundId -> list of { cat, key } refs ──────
 -- This lets us know if a sound should stay muted when toggling categories.
+-- The { cat, key } pair is stored at build time so callers never re-parse
+-- a concatenated key string per lookup.
 local soundToKeys = {}
 for catName, entries in pairs(module.SoundCategories) do
     for _, entry in ipairs(entries) do
@@ -228,7 +230,7 @@ for catName, entries in pairs(module.SoundCategories) do
             if not soundToKeys[soundId] then
                 soundToKeys[soundId] = {}
             end
-            soundToKeys[soundId][#soundToKeys[soundId] + 1] = catName .. "." .. entry.key
+            soundToKeys[soundId][#soundToKeys[soundId] + 1] = { cat = catName, key = entry.key }
         end
     end
 end
@@ -240,13 +242,13 @@ local UnmuteSoundFile = UnmuteSoundFile
 
 -- ── Mute/Unmute helpers ────────────────────────────────────
 
-local function isSoundMutedByAny(soundId, db, excludeKey)
+local function IsSoundMutedByAny(soundId, db, excludeCat, excludeKey)
     local refs = soundToKeys[soundId]
     if not refs then return false end
-    for _, refKey in ipairs(refs) do
-        if refKey ~= excludeKey then
-            local cat, key = refKey:match("^(%w+)%.(%w+)$")
-            if cat and key and db[cat] and db[cat][key] == true then
+    for _, ref in ipairs(refs) do
+        if ref.cat ~= excludeCat or ref.key ~= excludeKey then
+            local cat = db[ref.cat]
+            if cat and cat[ref.key] == true then
                 return true
             end
         end
@@ -254,7 +256,7 @@ local function isSoundMutedByAny(soundId, db, excludeKey)
     return false
 end
 
-local function applySoundState(soundId, muted)
+local function ApplySoundState(soundId, muted)
     if muted then
         MuteSoundFile(soundId)
     else
@@ -262,27 +264,27 @@ local function applySoundState(soundId, muted)
     end
 end
 
-local function toggleEntry(catName, entry, shouldMute)
+local function ToggleEntry(catName, entry, shouldMute)
     local db = TFQoLDB.muteSounds
     for _, soundId in ipairs(entry.sounds) do
         if shouldMute then
-            applySoundState(soundId, true)
+            ApplySoundState(soundId, true)
         else
             -- Only unmute if no other enabled entry also references this sound
-            if not isSoundMutedByAny(soundId, db, catName .. "." .. entry.key) then
-                applySoundState(soundId, false)
+            if not IsSoundMutedByAny(soundId, db, catName, entry.key) then
+                ApplySoundState(soundId, false)
             end
         end
     end
 end
 
-local function toggleCustomSound(soundId, shouldMute)
-    applySoundState(soundId, shouldMute)
+local function ToggleCustomSound(soundId, shouldMute)
+    ApplySoundState(soundId, shouldMute)
 end
 
 -- ── Apply all muted sounds from saved state ─────────────────
 
-local function applyAllMutedSounds()
+local function ApplyAllMutedSounds()
     local db = TFQoLDB.muteSounds
     if not db then return end
 
@@ -291,7 +293,7 @@ local function applyAllMutedSounds()
         for _, entry in ipairs(entries) do
             if db[catName] and db[catName][entry.key] == true then
                 for _, soundId in ipairs(entry.sounds) do
-                    applySoundState(soundId, true)
+                    ApplySoundState(soundId, true)
                 end
             end
         end
@@ -300,7 +302,7 @@ local function applyAllMutedSounds()
     -- Custom sounds
     if db.customSounds then
         for _, soundId in ipairs(db.customSounds) do
-            applySoundState(soundId, true)
+            ApplySoundState(soundId, true)
         end
     end
 end
@@ -313,7 +315,9 @@ end
 
 function module:IsEntryMuted(catName, key)
     local db = TFQoLDB.muteSounds
-    return db[catName] and db[catName][key] == true or false
+    local cat = db and db[catName]
+    if not cat then return false end
+    return cat[key] == true
 end
 
 function module:SetEntryMuted(catName, key, muted)
@@ -324,7 +328,7 @@ function module:SetEntryMuted(catName, key, muted)
     -- Find the entry and toggle it
     for _, entry in ipairs(module.SoundCategories[catName] or {}) do
         if entry.key == key then
-            toggleEntry(catName, entry, muted)
+            ToggleEntry(catName, entry, muted)
             return
         end
     end
@@ -348,7 +352,7 @@ function module:AddCustomSound(soundId)
     end
 
     db.customSounds[#db.customSounds + 1] = soundId
-    toggleCustomSound(soundId, true)
+    ToggleCustomSound(soundId, true)
     return true
 end
 
@@ -363,8 +367,8 @@ function module:RemoveCustomSound(soundId)
         if existingId == soundId then
             table.remove(db.customSounds, i)
             -- Only unmute if no preset also mutes this sound
-            if not soundToKeys[soundId] or not isSoundMutedByAny(soundId, db) then
-                applySoundState(soundId, false)
+            if not soundToKeys[soundId] or not IsSoundMutedByAny(soundId, db) then
+                ApplySoundState(soundId, false)
             end
             return
         end
@@ -384,29 +388,32 @@ function module:OnInitialize()
 end
 
 function module:OnEnable()
-    applyAllMutedSounds()
+    ApplyAllMutedSounds()
 end
 
 function module:OnDisable()
-    -- Unmute everything we've muted
-    local db = TFQoLDB.muteSounds
-
-    -- Preset categories
-    for catName, entries in pairs(module.SoundCategories) do
+    -- Unmute everything this module manages, UNCONDITIONALLY. A per-entry
+    -- muted-by-other check here is wrong: disable must never leave shared
+    -- sounds muted behind.
+    local seen = {}
+    for _, entries in pairs(module.SoundCategories) do
         for _, entry in ipairs(entries) do
             for _, soundId in ipairs(entry.sounds) do
-                if not isSoundMutedByAny(soundId, db, catName .. "." .. entry.key) then
-                    applySoundState(soundId, false)
+                if not seen[soundId] then
+                    seen[soundId] = true
+                    ApplySoundState(soundId, false)
                 end
             end
         end
     end
 
     -- Custom sounds
-    if db.customSounds then
+    local db = TFQoLDB.muteSounds
+    if db and db.customSounds then
         for _, soundId in ipairs(db.customSounds) do
-            if not soundToKeys[soundId] or not isSoundMutedByAny(soundId, db) then
-                applySoundState(soundId, false)
+            if not seen[soundId] then
+                seen[soundId] = true
+                ApplySoundState(soundId, false)
             end
         end
     end

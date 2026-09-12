@@ -8,7 +8,8 @@ local _, addon = ...
 local module = {}
 
 local frame = CreateFrame("Frame", "TFQoL_StealthIndicatorFrame", UIParent)
-frame:SetPoint("CENTER", 0, 25)
+-- No hardcoded anchor here: position comes from TFQoLDB via UpdatePosition
+-- on enable (Core.lua holds the defaults).
 frame:SetSize(12, 12)
 frame:Hide()
 
@@ -26,9 +27,7 @@ local eventFrame = CreateFrame("Frame")
 -- ── FONT RENDERING ────────────────────────────────────────────
 
 function module:UpdateFont()
-    local db = TFQoLDB.stealthIndicator
-    local flags = (TFQoLDB.global.slugRendering == true) and "OUTLINE,SLUG" or "OUTLINE"
-    frame.text:SetFont(addon:ResolveFont(db.fontFamily), db.fontSize, flags)
+    addon:ApplyAlertFont(frame.text, TFQoLDB.stealthIndicator)
 end
 
 -- ── POSITION ──────────────────────────────────────────────────
@@ -42,6 +41,7 @@ end
 function module:SetTestMode(enabled)
     testModeActive = enabled
     if enabled then
+        self:UpdatePosition()
         frame:Show()
     else
         if not IsStealthed() then

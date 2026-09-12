@@ -8,20 +8,9 @@ local toggleButton
 local BUTTON_NAME = "TFQoL_ActionBarToggle"
 local BINDING_ACTION = "CLICK " .. BUTTON_NAME .. ":LeftButton"
 
--- ── Binding safety ────────────────────────────────────────────
-
--- Guard: SaveBindings() must NEVER run before WoW loads its binding table.
--- Calling it early saves an empty table and wipes ALL user keybinds.
-local bindingsLoaded = false
-
-local function SafeSaveBindings()
-    if not bindingsLoaded then return end
-    SaveBindings(GetCurrentBindingSet())
-end
-
 -- ── WoW Key Bindings UI registration ──────────────────────────
-
-_G["BINDING_HEADER_TFQoL"] = "TF QoL"
+-- (BINDING_HEADER_TFQoL is set once in Core.lua; the BINDING_NAME line
+-- below labels this module's binding. Bindings.xml provides the category.)
 _G["BINDING_NAME_CLICK " .. BUTTON_NAME .. ":LeftButton"] = "Toggle Action Bars"
 
 -- ── Bar configuration ─────────────────────────────────────────
@@ -51,6 +40,21 @@ local PET_BAR_CLASSES = {
 local ipairs = ipairs
 local pairs = pairs
 local C_Timer = C_Timer
+
+-- ── Shared hide-on-show tracker ────────────────────────────────
+-- (Also used by BlizzardFrames.lua, loaded later per the .toc order.
+-- Hooks OnShow exactly once per frame; re-hides while `shouldHide`
+-- returns true. Returning false skips the hide, e.g. to defer in combat.)
+
+function addon:HookHideOnShow(frame, shouldHide)
+    if not frame or frame._tfqolHideHooked then return end
+    frame:HookScript("OnShow", function(self)
+        if shouldHide and shouldHide(self) then
+            self:Hide()
+        end
+    end)
+    frame._tfqolHideHooked = true
+end
 
 -- ── Class / form checks ────────────────────────────────────────
 
@@ -141,6 +145,7 @@ local function SetBarsHidden(hidden)
 end
 
 local function ToggleBars()
+    if not addon:IsModuleEnabled("ActionBarToggle") then return end
     isHidden = not isHidden
     SetBarsHidden(isHidden)
     local db = addon.db and addon.db.actionBarToggle
@@ -149,18 +154,16 @@ end
 
 local function HookBarFrames()
     for _, frame in ipairs(barFrames) do
-        if not frame._tfqolABT then
-            frame:HookScript("OnShow", function(self)
-                if isHidden and addon:IsModuleEnabled("ActionBarToggle") then
-                    if InCombatLockdown() then
-                        pendingBarState = true
-                    else
-                        self:Hide()
-                    end
+        addon:HookHideOnShow(frame, function()
+            if isHidden and addon:IsModuleEnabled("ActionBarToggle") then
+                if InCombatLockdown() then
+                    pendingBarState = true
+                    return false
                 end
-            end)
-            frame._tfqolABT = true
-        end
+                return true
+            end
+            return false
+        end)
     end
 end
 
@@ -209,6 +212,18 @@ function module:GetCurrentKey()
     return (db and db.keybind) or ""
 end
 
+--- Restore the standard binding from SavedVariables (used on enable and
+--- once the binding table is ready, so a disable-cycle never drops the key).
+local function RestoreStandardBinding()
+    if InCombatLockdown() then return end
+    if not addon:IsModuleEnabled("ActionBarToggle") then return end
+    local db = addon.db and addon.db.actionBarToggle
+    local key = db and db.keybind or ""
+    if key ~= "" and not GetBindingKey(BINDING_ACTION) then
+        SetBinding(key, BINDING_ACTION)
+    end
+end
+
 --- Set a keybinding. Writes to both the standard system (for Key Bindings UI sync)
 --- and SavedVariables (as fallback). Also applies the override binding immediately.
 function module:SetKeybind(key)
@@ -220,19 +235,13 @@ function module:SetKeybind(key)
     if key and key ~= "" then
         SetBinding(key, BINDING_ACTION)
     end
-    SafeSaveBindings()
 
-    -- Update SavedVariables
+    -- Update SavedVariables before applying, so ApplyOverrideBinding resolves the new key
     local db = addon.db and addon.db.actionBarToggle
     if db then db.keybind = key or "" end
+    addon:SaveBindingsSafe()
 
-    -- Apply override binding immediately
-    if holder and not InCombatLockdown() then
-        ClearOverrideBindings(holder)
-    end
-    if key and key ~= "" and holder and not InCombatLockdown() then
-        SetOverrideBindingClick(holder, false, key, BUTTON_NAME)
-    end
+    ApplyOverrideBinding()
 end
 
 --- Temporarily suspend the override binding during keybind capture.
@@ -249,8 +258,9 @@ end
 
 local function OnEvent(self, event, ...)
     if event == "BINDINGS_LOADED" then
-        bindingsLoaded = true
-        -- Apply override binding now that the full binding table is loaded
+        -- Binding table ready: restore the standard key (if a disable-cycle
+        -- cleared it) and apply the override binding.
+        RestoreStandardBinding()
         ApplyOverrideBinding()
 
     elseif event == "PLAYER_ENTERING_WORLD" then
@@ -276,6 +286,11 @@ local function OnEvent(self, event, ...)
         if pendingBindingApply then
             ApplyOverrideBinding()
         end
+        -- A disable mid-combat keeps this event to flush pending state;
+        -- drop it once done so nothing lingers while disabled.
+        if not addon:IsModuleEnabled("ActionBarToggle") then
+            holder:UnregisterAllEvents()
+        end
 
     elseif event == "PLAYER_SPECIALIZATION_CHANGED"
         or event == "UPDATE_SHAPESHIFT_FORMS"
@@ -300,10 +315,15 @@ function module:OnInitialize()
     holder = CreateFrame("Frame", "TFQoL_ABTHolder", UIParent)
     holder:Show()
     holder:SetScript("OnEvent", OnEvent)
+    -- Session-scoped: registered once here (not OnEnable) so the binding
+    -- table is caught even if the module starts disabled.
+    holder:RegisterEvent("BINDINGS_LOADED")
 
     toggleButton = CreateFrame("Button", BUTTON_NAME, UIParent, "SecureActionButtonTemplate")
     toggleButton:RegisterForClicks("AnyUp")
-    toggleButton:SetScript("OnClick", function() ToggleBars() end)
+    toggleButton:SetScript("OnClick", function()
+        if addon:IsModuleEnabled("ActionBarToggle") then ToggleBars() end
+    end)
 end
 
 function module:OnEnable()
@@ -312,9 +332,9 @@ function module:OnEnable()
 
     CollectBarFrames()
     HookBarFrames()
+    RestoreStandardBinding()
     if isHidden then SetBarsHidden(true) end
 
-    holder:RegisterEvent("BINDINGS_LOADED")
     holder:RegisterEvent("PLAYER_ENTERING_WORLD")
     holder:RegisterEvent("UPDATE_BINDINGS")
     holder:RegisterEvent("UPDATE_VEHICLE_ACTIONBAR")
@@ -356,14 +376,27 @@ end
 function module:OnDisable()
     isHidden = false
     SetBarsHidden(false)
-    if holder then
-        if InCombatLockdown() then
-            pendingBindingApply = false
-        else
-            ClearOverrideBindings(holder)
-        end
+    if InCombatLockdown() then
+        -- No binding changes allowed in combat: drop any deferred apply so
+        -- nothing re-arms after combat while disabled.
+        pendingBindingApply = false
+    elseif holder then
+        ClearOverrideBindings(holder)
+        -- Clear the standard binding so the key goes inert while disabled
+        -- (restored from db.keybind on the next enable / BINDINGS_LOADED).
+        local boundKey = GetBindingKey(BINDING_ACTION)
+        if boundKey then SetBinding(boundKey, nil) end
+        addon:SaveBindingsSafe()
     end
-    holder:UnregisterAllEvents()
+    if pendingBarState ~= nil then
+        -- Disabled mid-combat with a deferred show/hide: keep
+        -- PLAYER_REGEN_ENABLED so the pending state still flushes (its
+        -- handler unregisters itself once done).
+        holder:UnregisterAllEvents()
+        holder:RegisterEvent("PLAYER_REGEN_ENABLED")
+    else
+        holder:UnregisterAllEvents()
+    end
 end
 
 -- ── Public API ──────────────────────────────────────────────────

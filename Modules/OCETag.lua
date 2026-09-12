@@ -44,7 +44,12 @@ local function OnSearchEntryUpdate(self)
     if not moduleEnabled then return end
     local info = C_LFGList.GetSearchResultInfo(self.resultID)
     if info and IsOCE(info.leaderName) then
-        self.ActivityName:SetFormattedText("%s%s", OCE_TAG, self.ActivityName:GetText())
+        -- Idempotency guard: this hook re-fires on repeated row updates, so
+        -- skip rows that already carry the tag instead of stacking prefixes.
+        local current = self.ActivityName:GetText()
+        if current and not current:find("^|cFFFF4040%[OCE%]", 1) then
+            self.ActivityName:SetFormattedText("%s%s", OCE_TAG, current)
+        end
     end
 end
 

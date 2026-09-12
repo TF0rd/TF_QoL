@@ -37,14 +37,11 @@ end
 
 local function HookHideFrames()
     for _, frame in ipairs(trackedFrames) do
-        if not frame._tfqolBF then
-            frame:HookScript("OnShow", function(self)
-                if not updating and addon:IsModuleEnabled("BlizzardFrames") then
-                    self:Hide()
-                end
-            end)
-            frame._tfqolBF = true
-        end
+        -- Shared tracker (defined in ActionBarToggle.lua, loaded earlier
+        -- per the .toc): hooks OnShow once; re-hides while enabled.
+        addon:HookHideOnShow(frame, function()
+            return not updating and addon:IsModuleEnabled("BlizzardFrames")
+        end)
     end
 end
 
@@ -92,10 +89,28 @@ module.MOVABLE_PANELS = MOVABLE_PANELS
 
 local InCombatLockdown = InCombatLockdown
 local hookedMovers = {}
+local hookedPanels = {}
 local pendingRestore = {}
 local pendingPropagate = {}
 
 local SCALE_MIN, SCALE_MAX, SCALE_STEP = 0.5, 2.0, 0.1
+
+-- ── Shared reset helper ────────────────────────────────────────
+-- (Middle-click reset, DisableDrag, and ResetAllPositions all funnel here.)
+
+local function ResetFrameToDefault(frame)
+    if not frame then return end
+    frame._tfqolMoving = true
+    frame:ClearAllPoints()
+    frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    frame._tfqolMoving = nil
+    if frame._tfqolScaled and frame._tfqolOrigScale then
+        frame._tfqolScaling = true
+        frame:SetScale(frame._tfqolOrigScale)
+        frame._tfqolScaling = nil
+        frame._tfqolScaled = nil
+    end
+end
 
 local function SavePos(name, point, x, y)
     local db = addon.db and addon.db.blizzardFrames
@@ -160,15 +175,61 @@ local function ApplyPos(frame, name)
     frame._tfqolMoving = nil
 end
 
+-- Hook a panel's SetPoint/SetScale exactly once per session. The hook bodies
+-- are gated on the mover setting + module state, so Enable/Disable only
+-- create and destroy drag overlays — hooks never pile up and never fire
+-- while the mover is off.
+local function HookPanelOnce(name)
+    if hookedPanels[name] then return end
+    local frame = _G[name]
+    if not frame then return end
+    if frame.IsForbidden and frame:IsForbidden() then return end
+    hookedPanels[name] = true
+
+    -- Prevent Blizzard from re-anchoring our moved frames
+    hooksecurefunc(frame, "SetPoint", function(self)
+        if self._tfqolMoving or self._tfqolDrag then return end
+        local db = addon.db and addon.db.blizzardFrames
+        if not (db and db.moverEnabled) then return end
+        if not addon:IsModuleEnabled("BlizzardFrames") then return end
+        local pos = GetSavedPos(name)
+        if not pos then return end
+        if InCombatLockdown() and self.IsProtected and self:IsProtected() then
+            pendingRestore[self] = name
+            return
+        end
+        ApplyPos(self, name)
+    end)
+
+    -- Re-assert the user's scale whenever Blizzard (or anything) changes it
+    -- in place. Some windows rescale themselves on state changes with no
+    -- hide/show to fire the OnShow restore. Only re-assert for frames the
+    -- user has actually scaled; guarded so our own re-scale can't recurse.
+    hooksecurefunc(frame, "SetScale", function(self, scale)
+        if self._tfqolScaling then return end
+        local db = addon.db and addon.db.blizzardFrames
+        if not (db and db.moverEnabled) then return end
+        if not addon:IsModuleEnabled("BlizzardFrames") then return end
+        local saved = GetSavedScale(name)
+        if saved and math.abs(scale - saved) > 0.005 then
+            if not (InCombatLockdown() and self.IsProtected and self:IsProtected()) then
+                ApplyScale(self, name)
+            end
+        end
+    end)
+end
+
 local function EnableDrag(name)
     local frame = _G[name]
     if not frame then return end
-    if frame._tfqolMoverDone then
+    if frame.IsForbidden and frame:IsForbidden() then return end
+    HookPanelOnce(name)
+    if hookedMovers[name] then
+        -- Overlay already active: just re-apply saved state.
         ApplyPos(frame, name)
         ApplyScale(frame, name)
         return
     end
-    if frame.IsForbidden and frame:IsForbidden() then return end
 
     local movable = frame.IsMovable and frame:IsMovable() or false
     local clamped = frame.IsClampedToScreen and frame:IsClampedToScreen() or false
@@ -230,45 +291,9 @@ local function EnableDrag(name)
         if InCombatLockdown() and frame.IsProtected and frame:IsProtected() then return end
         ClearPos(name)
         ClearScale(name)
-        frame._tfqolMoving = true
-        frame:ClearAllPoints()
-        frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-        frame._tfqolMoving = nil
-        if frame._tfqolScaled then
-            frame._tfqolScaling = true
-            frame:SetScale(frame._tfqolOrigScale or 1)
-            frame._tfqolScaling = nil
-            frame._tfqolScaled = nil
-        end
+        ResetFrameToDefault(frame)
     end)
 
-    -- Prevent Blizzard from re-anchoring our moved frames
-    hooksecurefunc(frame, "SetPoint", function(self)
-        if self._tfqolMoving or self._tfqolDrag then return end
-        local pos = GetSavedPos(name)
-        if not pos then return end
-        if InCombatLockdown() and self.IsProtected and self:IsProtected() then
-            pendingRestore[self] = name
-            return
-        end
-        ApplyPos(self, name)
-    end)
-
-    -- Re-assert the user's scale whenever Blizzard (or anything) changes it
-    -- in place. Some windows rescale themselves on state changes with no
-    -- hide/show to fire the OnShow restore. Only re-assert for frames the
-    -- user has actually scaled; guarded so our own re-scale can't recurse.
-    hooksecurefunc(frame, "SetScale", function(self, scale)
-        if self._tfqolScaling then return end
-        local saved = GetSavedScale(name)
-        if saved and math.abs(scale - saved) > 0.005 then
-            if not (InCombatLockdown() and self.IsProtected and self:IsProtected()) then
-                ApplyScale(self, name)
-            end
-        end
-    end)
-
-    frame._tfqolMoverDone = true
     frame._tfqolMoverOverlay = overlay
     frame._tfqolMoverDefaults = { movable = movable, clamped = clamped }
     frame._tfqolOrigScale = frame:GetScale()
@@ -296,22 +321,12 @@ local function DisableDrag(name)
                 if frame.SetMovable then frame:SetMovable(d.movable) end
                 if frame.SetClampedToScreen then frame:SetClampedToScreen(d.clamped) end
             end
-            -- Reset to default position
-            if GetSavedPos(name) then
-                frame._tfqolMoving = true
-                frame:ClearAllPoints()
-                frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-                frame._tfqolMoving = nil
-            end
-            -- Reset to default scale
-            if frame._tfqolScaled and frame._tfqolOrigScale then
-                frame._tfqolScaling = true
-                frame:SetScale(frame._tfqolOrigScale)
-                frame._tfqolScaling = nil
-                frame._tfqolScaled = nil
+            -- Reset to default position/scale (only touches moved/scaled
+            -- panels; permanent hooks stay installed but gated off).
+            if GetSavedPos(name) or frame._tfqolScaled then
+                ResetFrameToDefault(frame)
             end
         end
-        frame._tfqolMoverDone = nil
         frame._tfqolMoverOverlay = nil
         frame._tfqolMoverDefaults = nil
         frame._tfqolOrigScale = nil
@@ -396,16 +411,7 @@ function module:ResetAllPositions()
     for _, name in ipairs(MOVABLE_PANELS) do
         local data = hookedMovers[name]
         if data and data.frame then
-            data.frame._tfqolMoving = true
-            data.frame:ClearAllPoints()
-            data.frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-            data.frame._tfqolMoving = nil
-            if data.frame._tfqolScaled and data.frame._tfqolOrigScale then
-                data.frame._tfqolScaling = true
-                data.frame:SetScale(data.frame._tfqolOrigScale)
-                data.frame._tfqolScaling = nil
-                data.frame._tfqolScaled = nil
-            end
+            ResetFrameToDefault(data.frame)
         end
     end
 end

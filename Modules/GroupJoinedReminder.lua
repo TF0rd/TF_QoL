@@ -45,13 +45,10 @@ frame:SetScript("OnEvent", function(self, event, ...)
         local _, groupName = ...
         pendingGroupName = groupName
         CheckAndPrint()
-
-    elseif event == "LFG_LIST_ACTIVE_ENTRY_UPDATE" then
-        local created = ...
-        if created then
-            CheckAndPrint()
-        end
     end
+    -- NOTE: LFG_LIST_ACTIVE_ENTRY_UPDATE is deliberately ignored. It fires
+    -- when the player lists their own group, which is not a join; only
+    -- LFG_LIST_JOINED_GROUP verifiably signals joining a group.
 end)
 
 -- ── MODULE LIFECYCLE ──────────────────────────────────────────
@@ -60,7 +57,6 @@ function module:OnEnable()
     moduleEnabled = true
     frame:RegisterEvent("GROUP_LEFT")
     frame:RegisterEvent("LFG_LIST_JOINED_GROUP")
-    frame:RegisterEvent("LFG_LIST_ACTIVE_ENTRY_UPDATE")
 end
 
 function module:OnDisable()

@@ -10,9 +10,8 @@ GUIFrame:RegisterContent("StealthIndicator", function(scrollChild, yOffset)
 
     -- ── About card ──────────────────────────────────────────────────────────
 
-    local aboutCard = GUIFrame:CreateCard(scrollChild, "About", yOffset)
-    aboutCard:AddLabel("Displays a text indicator on screen when you are in stealth.")
-    yOffset = yOffset + aboutCard:GetContentHeight() + Theme.paddingLarge
+    yOffset = GUIFrame:AddAboutCard(scrollChild, yOffset, "About",
+        "Displays a text indicator on screen when you are in stealth.")
 
     -- ── Module header ──────────────────────────────────────────────────────
 
@@ -22,8 +21,8 @@ GUIFrame:RegisterContent("StealthIndicator", function(scrollChild, yOffset)
 
     -- ── Settings cards ──────────────────────────────────────────────────────
 
-    yOffset = GUIFrame:AddFontCard(scrollChild, yOffset, "stealthIndicator")
-    yOffset = GUIFrame:AddPositionCard(scrollChild, yOffset, "stealthIndicator")
+    yOffset = GUIFrame:AddModuleSettingsCards(scrollChild, yOffset,
+        "stealthIndicator", { "font", "position" })
 
     return yOffset
 end)

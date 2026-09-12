@@ -6,21 +6,8 @@
 -- ════════════════════════════════════════════════════════════════
 
 local _, addon = ...
-local module = {}
 
-local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
-
-local frame = CreateFrame("Frame", "TFQoL_LustAlertFrame", UIParent)
-frame:SetPoint("CENTER", 0, -100)
-frame:SetSize(16, 16)
-frame:Hide()
-
-frame.text = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-frame.text:SetPoint("CENTER")
-frame.text:SetTextColor(0.1176, 1.0, 0.0, 1.0) -- #1EFF00 (Neon Green)
-frame.text:SetText("Lust Available")
-frame.text:SetShadowOffset(0, 0)
-frame.text:SetShadowColor(0, 0, 0, 0)
+-- ── Local constants ──────────────────────────────────────────
 
 -- Lust-family debuff IDs
 local lustDebuffs = {
@@ -40,141 +27,53 @@ local lustDebuffs = {
 local LUST_CLASSES = { SHAMAN = true, MAGE = true, HUNTER = true, EVOKER = true }
 local playerClass = select(2, UnitClass("player"))
 
-local auraEventsActive = false
-local testModeActive   = false
-local moduleEnabled    = false
+-- ── Helper functions ─────────────────────────────────────────
 
-local eventFrame = CreateFrame("Frame")
-
--- ── PRIVATE HELPERS ───────────────────────────────────────────
-
-local function ShouldBeActive(event)
-    local db = TFQoLDB.lustAlert
-
-    if db.onlyIfHasLust and not LUST_CLASSES[playerClass] then return false end
-
-    local inCombat = InCombatLockdown() or (event == "PLAYER_REGEN_DISABLED")
-    if (db.onlyCombat == true) and not inCombat then return false end
-
-    local inInstance, instanceType = IsInInstance()
-    if instanceType == "party" and not (db.showInDungeons == true) then return false end
-    if instanceType == "raid"  and not (db.showInRaids    == true) then return false end
-    if (not inInstance or instanceType == "scenario") and not (db.showInOpenWorld == true) then return false end
-
+-- True when no lust debuff is active (alert should show).
+local function ScanLust()
+    for _, spellID in ipairs(lustDebuffs) do
+        if C_UnitAuras.GetPlayerAuraBySpellID(spellID) then
+            return false
+        end
+    end
     return true
 end
 
-local function HasLustDebuff()
-    for _, spellID in ipairs(lustDebuffs) do
-        if C_UnitAuras.GetPlayerAuraBySpellID(spellID) then
-            return true
-        end
-    end
-    return false
-end
-
-local function ScanLustDebuffs()
-    if testModeActive then return end
-
-    if HasLustDebuff() then
-        frame:Hide()
-    else
-        if not frame:IsVisible() then
-            local db = TFQoLDB.lustAlert
-            if db.playSound and db.soundName and db.soundName ~= "None" and LSM then
-                local path = LSM:Fetch("sound", db.soundName)
-                if path then PlaySoundFile(path, "Master") end
-            end
-        end
-        frame:Show()
-    end
-end
-
-local function EvaluateState(event)
-    if testModeActive then return end
-
-    if ShouldBeActive(event) then
-        auraEventsActive = true
-        ScanLustDebuffs()
-    else
-        auraEventsActive = false
-        frame:Hide()
-    end
-end
-
--- ── FONT RENDERING ────────────────────────────────────────────
-
-function module:UpdateFont()
+-- Extra visibility gate: class filter.
+local function LustGate()
     local db = TFQoLDB.lustAlert
-    local flags = (TFQoLDB.global.slugRendering == true) and "OUTLINE,SLUG" or "OUTLINE"
-    frame.text:SetFont(addon:ResolveFont(db.fontFamily), db.fontSize, flags)
+    if db and db.onlyIfHasLust and not LUST_CLASSES[playerClass] then return false end
 end
 
--- ── POSITION ──────────────────────────────────────────────────
-
-function module:UpdatePosition()
-    addon:ApplyPosition(frame, TFQoLDB.lustAlert)
-end
-
--- ── TEST MODE ─────────────────────────────────────────────────
-
-function module:SetTestMode(enabled)
-    testModeActive = enabled
-    if enabled then
-        frame:Show()
-    else
-        frame:Hide()
-        EvaluateState()
-    end
-end
-
-function module:IsTestMode()
-    return testModeActive
-end
-
--- ── EVENT HANDLING ────────────────────────────────────────────
-
-local function OnEvent(_, event, unit)
+-- UNIT_AURA rescans (ignoring secret/non-player units); all else re-evaluates.
+local function RescanFilter(event, unit)
     if event == "UNIT_AURA" then
-        if not auraEventsActive then return end
-        -- 12.1: unitTarget can be a secret value when auras are restricted;
-        -- guard the comparison (and we only registered UNIT_AURA for "player").
-        if (issecretvalue and issecretvalue(unit)) or unit ~= "player" then return end
-        -- Don't parse updateInfo — its aura data can be secret values in 12.1
-        -- (comparisons/indexing throw). A full re-scan via GetPlayerAuraBySpellID
-        -- is cheap and secret-safe.
-        ScanLustDebuffs()
-    else
-        EvaluateState(event)
+        -- unit can be a secret value when auras are restricted; guard the
+        -- comparison (we only registered UNIT_AURA for "player").
+        if addon:IsSecretValue(unit) or unit ~= "player" then return "ignore" end
+        return "rescan"
     end
+    return "evaluate"
 end
 
-function module:ForceCheck()
-    if not moduleEnabled then return end
-    EvaluateState()
-end
+-- ── Module lifecycle ─────────────────────────────────────────
 
--- ── MODULE LIFECYCLE ──────────────────────────────────────────
-
-function module:OnEnable()
-    self:UpdateFont()
-    self:UpdatePosition()
-    eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-    eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
-    eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-    eventFrame:RegisterEvent("ENCOUNTER_END")
-    eventFrame:RegisterUnitEvent("UNIT_AURA", "player")
-    eventFrame:SetScript("OnEvent", OnEvent)
-    moduleEnabled = true
-    EvaluateState()
-end
-
-function module:OnDisable()
-    moduleEnabled = false
-    eventFrame:UnregisterAllEvents()
-    frame:Hide()
-    auraEventsActive = false
-    testModeActive = false
-end
+local module = addon:CreateIndicatorAlert("LustAlert", {
+    dbKey = "lustAlert",
+    frameName = "TFQoL_LustAlertFrame",
+    text = "Lust Available",
+    scanFn = ScanLust,
+    shouldBeActiveFn = LustGate,
+    rescanEventFilter = RescanFilter,
+    events = {
+        "PLAYER_ENTERING_WORLD",
+        "PLAYER_REGEN_DISABLED",
+        "PLAYER_REGEN_ENABLED",
+        "ENCOUNTER_END",
+    },
+    unitEvents = {
+        { event = "UNIT_AURA", unit = "player" },
+    },
+})
 
 addon:RegisterModule("LustAlert", module)

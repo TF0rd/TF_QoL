@@ -73,7 +73,7 @@ STAGING = Path(f"/tmp/tf_qol_tts/{time.strftime('%Y%m%d-%H%M%S')}")
 LEGACY = {"Air Horn", "Brass", "Glass", "Oh No", "Tada Fanfare",
           "Water Drop", "Kaching", "Hiccup"}
 REG = re.compile(
-    r'LSM:Register\("sound", "(.+?)", \[\[Interface\\AddOns\\TF_QoL\\Media\\Sounds\\(.+?)\]\]\)\n?'
+    r'^\s*LSM:Register\(\s*"sound",\s*"(.+?)",\s*\[\[Interface\\AddOns\\TF_QoL\\Media\\Sounds\\(.+?)\]\]\)\s*$'
 )
 
 
@@ -246,6 +246,23 @@ def sync_media_lua(entries: list[str]) -> dict:
 
     name_by_slug = {slugify(e): e for e in entries}
 
+    # 0. Reconcile display names to canonical sounds.txt Title Case.
+    #    Matched by slug so "Chi-Ji" vs "Chi-ji" style drift self-heals.
+    renamed = []
+    reconciled = []
+    for ln in lines:
+        m = REG.match(ln)
+        if m:
+            name, fname = m.group(1), m.group(2)
+            canonical = name_by_slug.get(slugify(fname.rsplit(".", 1)[0]))
+            if canonical and canonical != name:
+                indent = ln[:len(ln) - len(ln.lstrip())]
+                ln = (f'{indent}LSM:Register("sound", "{canonical}", '
+                      f'[[Interface\\\\AddOns\\\\TF_QoL\\\\Media\\\\Sounds\\\\{fname}]])\n')
+                renamed.append((name, canonical))
+        reconciled.append(ln)
+    lines = reconciled
+
     registered = {m.group(2): m.group(1) for m in (REG.match(l) for l in lines) if m}
 
     added, removed = [], []
@@ -306,7 +323,7 @@ def sync_media_lua(entries: list[str]) -> dict:
     if res.returncode != 0:
         raise RuntimeError(f"luac5.1 -p failed: {res.stderr}")
 
-    return {"added": added, "removed": removed,
+    return {"added": added, "removed": removed, "renamed": renamed,
             "registrations": len(files_now), "files": len(on_disk)}
 
 
@@ -394,14 +411,17 @@ def main() -> int:
     summary = sync_media_lua(entries)
     for name, fname in summary["removed"]:
         print(f"  - removed {name!r} (file {fname} deleted)")
+    for old, new in summary["renamed"]:
+        print(f"  ~ renamed {old!r} -> {new!r} (canonical sounds.txt)")
     for name, fname in summary["added"]:
         print(f"  + added   {name!r} -> {fname}")
-    if not summary["added"] and not summary["removed"]:
+    if not summary["added"] and not summary["removed"] and not summary["renamed"]:
         print("  (no changes — already in sync)")
 
     print(f"\n═══ summary ═══\nregistrations: {summary['registrations']}  "
           f"files: {summary['files']}  generated: {len(to_generate)}  "
-          f"added: {len(summary['added'])}  removed: {len(summary['removed'])}")
+          f"added: {len(summary['added'])}  removed: {len(summary['removed'])}  "
+          f"renamed: {len(summary['renamed'])}")
     return 0
 
 

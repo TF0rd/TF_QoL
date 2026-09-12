@@ -10,9 +10,8 @@ GUIFrame:RegisterContent("SharedActionBars", function(scrollChild, yOffset)
 
     -- ── About card ──────────────────────────────────────────────────────────
 
-    local aboutCard = GUIFrame:CreateCard(scrollChild, "About", yOffset)
-    aboutCard:AddLabel("Locks all talent loadouts to shared action bars, preventing per-spec bar layouts.")
-    yOffset = yOffset + aboutCard:GetContentHeight() + Theme.paddingLarge
+    yOffset = GUIFrame:AddAboutCard(scrollChild, yOffset, "About",
+        "Locks all talent loadouts to shared action bars, preventing per-spec bar layouts.")
 
     -- ── Module header ──────────────────────────────────────────────────────
 

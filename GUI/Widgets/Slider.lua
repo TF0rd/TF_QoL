@@ -1,6 +1,7 @@
 -- ════════════════════════════════════════════════════════════════════════════════════
 -- Widget: Slider (Horizontal slider with steppers, value editbox, and thumb animation)
--- Usage: GUIFrame:CreateSlider(parent, labelText, min, max, step, value, callback)
+-- Usage: GUIFrame:CreateSlider(parent, labelText, min, max, step, value, callback[, compact])
+-- (compact hides the label and raises the track for header-labelled columns)
 -- ════════════════════════════════════════════════════════════════════════════════════
 
 local _, addon = ...
@@ -11,7 +12,6 @@ local tostring = tostring
 local CreateFrame = CreateFrame
 local C_Timer = C_Timer
 local math_floor, math_max, math_min = math.floor, math.max, math.min
-local GetTime = GetTime
 
 -- ════════════════════════════════════════════════════════════════════════════════════
 -- Part 1: Constants
@@ -23,7 +23,7 @@ local STEPPER_TEX = "Interface\\AddOns\\TF_QoL\\Media\\GUITextures\\collapse.tga
 -- Part 2: CreateSlider (Main factory — row with label, track, thumb, steppers, editbox)
 -- ════════════════════════════════════════════════════════════════════════════════════
 
-function GUIFrame:CreateSlider(parent, labelText, min, max, step, value, callback)
+function GUIFrame:CreateSlider(parent, labelText, min, max, step, value, callback, compact)
     local Theme = addon.Theme
     min   = tonumber(min)   or 0
     max   = tonumber(max)   or 100
@@ -43,12 +43,20 @@ function GUIFrame:CreateSlider(parent, labelText, min, max, step, value, callbac
     label:SetTextColor(Theme.textMuted[1], Theme.textMuted[2], Theme.textMuted[3], 1)
     row.label = label
 
+    -- Compact mode (a column header explains the slider): hide the label
+    -- and raise the track so the row can shrink.
+    local trackY = -22
+    if compact then
+        label:Hide()
+        trackY = -12
+    end
+
     -- ── Slider Background Track ─────────────────────────────────────────────────────
 
     local sliderBG = CreateFrame("Frame", nil, row, "BackdropTemplate")
     sliderBG:SetHeight(8)
-    sliderBG:SetPoint("TOPLEFT",  row, "TOPLEFT",  68, -22)
-    sliderBG:SetPoint("TOPRIGHT", row, "TOPRIGHT", -18, -22)
+    sliderBG:SetPoint("TOPLEFT",  row, "TOPLEFT",  68, trackY)
+    sliderBG:SetPoint("TOPRIGHT", row, "TOPRIGHT", -18, trackY)
     sliderBG:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
     sliderBG:SetBackdropColor(Theme.bgLight[1], Theme.bgLight[2], Theme.bgLight[3], 1)
     sliderBG:SetBackdropBorderColor(Theme.border[1], Theme.border[2], Theme.border[3], 1)
@@ -58,8 +66,8 @@ function GUIFrame:CreateSlider(parent, labelText, min, max, step, value, callbac
 
     local slider = CreateFrame("Slider", nil, row, "BackdropTemplate")
     slider:SetHeight(8)
-    slider:SetPoint("TOPLEFT",  row, "TOPLEFT",  77, -22)
-    slider:SetPoint("TOPRIGHT", row, "TOPRIGHT", -27, -22)
+    slider:SetPoint("TOPLEFT",  row, "TOPLEFT",  77, trackY)
+    slider:SetPoint("TOPRIGHT", row, "TOPRIGHT", -27, trackY)
     slider:SetOrientation("HORIZONTAL")
     slider:SetMinMaxValues(min, max)
     slider:SetValueStep(step)
@@ -195,11 +203,25 @@ function GUIFrame:CreateSlider(parent, labelText, min, max, step, value, callbac
     valueEdit:SetText(tostring(value))
     row.valueEdit = valueEdit
 
-    -- ── Slider Event Handlers ───────────────────────────────────────────────────────
+    -- ── Slider Event Handlers (trailing-edge debounce + force-fire on release) ──────
 
     local isUpdating = false
-    local throttleDelay = 0.1
-    local lastUpdate = 0
+    local debounceDelay = 0.1
+    local pendingValue = nil
+    local debounceTimer = nil
+    local suppressCallbacks = true -- held through initial layout so creation never fires
+
+    local function FireCallback(val)
+        pendingValue = nil
+        if callback then callback(val) end
+    end
+
+    local function CancelDebounce()
+        if debounceTimer then
+            debounceTimer:Cancel()
+            debounceTimer = nil
+        end
+    end
 
     local function UpdateFill()
         local val = slider:GetValue()
@@ -217,10 +239,13 @@ function GUIFrame:CreateSlider(parent, labelText, min, max, step, value, callbac
     slider:SetScript("OnValueChanged", function(self, val)
         UpdateFill()
         UpdateThumbPosition()
-        local t = GetTime()
-        if t - lastUpdate < throttleDelay then return end
-        lastUpdate = t
-        if callback then callback(val) end
+        if suppressCallbacks then return end
+        pendingValue = val
+        CancelDebounce()
+        debounceTimer = C_Timer.NewTimer(debounceDelay, function()
+            debounceTimer = nil
+            if pendingValue ~= nil then FireCallback(pendingValue) end
+        end)
     end)
     slider:SetScript("OnSizeChanged", function() UpdateFill(); UpdateThumbPosition() end)
 
@@ -265,12 +290,15 @@ function GUIFrame:CreateSlider(parent, labelText, min, max, step, value, callbac
         if btn == "LeftButton" then
             curDrag = false
             AnimateThumbColor(self:IsMouseOver(), false)
+            -- Force-fire so the final drag value is never swallowed by the debounce
+            CancelDebounce()
+            if pendingValue ~= nil then FireCallback(pendingValue) end
         end
     end)
     slider:SetScript("OnEnter", function(self) if not curDrag then AnimateThumbColor(true, false) end end)
     slider:SetScript("OnLeave", function(self) if not curDrag then AnimateThumbColor(false, false) end end)
 
-    C_Timer.After(0, function() UpdateFill(); UpdateThumbPosition() end)
+    C_Timer.After(0, function() UpdateFill(); UpdateThumbPosition(); suppressCallbacks = false end)
 
     -- ════════════════════════════════════════════════════════════════════════════════
     -- Part 3: Public API
@@ -286,7 +314,7 @@ function GUIFrame:CreateSlider(parent, labelText, min, max, step, value, callbac
             leftStepper:EnableMouse(true)
             rightStepper:EnableMouse(true)
         else
-            row:SetAlpha(0.4)
+            row:SetAlpha(addon.Theme.disabledAlpha)
             slider:EnableMouse(false)
             valueEdit:EnableMouse(false)
             leftStepper:EnableMouse(false)

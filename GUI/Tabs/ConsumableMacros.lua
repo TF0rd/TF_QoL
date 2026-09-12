@@ -225,7 +225,7 @@ local function CreatePIMacroEditorPanel(parent, title)
             editBox:ClearFocus()
             editBox:EnableMouse(false)
             editBox:SetTextColor(Theme.textMuted[1], Theme.textMuted[2], Theme.textMuted[3], 1)
-            panel:SetAlpha(0.6)
+            panel:SetAlpha(Theme.disabledAlpha)
         end
     end
 
@@ -325,7 +325,7 @@ end
 
 GUIFrame:RegisterContent("ConsumableMacros", function(scrollChild, yOffset)
     local Theme = addon.Theme
-    local db = addon.db and addon.db.consumableMacros
+    local db = TFQoLDB.consumableMacros
     if not db then return yOffset end
 
     local module = addon.modules["ConsumableMacros"]

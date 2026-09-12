@@ -9,20 +9,138 @@ local GUIFrame = addon.GUIFrame
 
 local C_CVar_GetCVarInfo = C_CVar.GetCVarInfo
 local C_CVar_SetCVar     = C_CVar.SetCVar
+local C_Timer_NewTimer   = C_Timer.NewTimer
 local strmatch           = strmatch
 local tinsert            = tinsert
 local wipe               = wipe
 local format             = format
 
--- ── State and hooks ────────────────────────────────────────────────────────
+-- ── File-level CVar state ──────────────────────────────────────────────────
+-- Lives here (not in the builder closure) so the SetCVar/ConsoleExec hooks
+-- below can do a debounced full rebuild — or a single-row refresh when the
+-- changed key is known — without rebuilding the tab.
 
--- currentRefresh is updated each time the browser tab is opened.
--- File-level hooks and combat frame delegate through this so they don't accumulate.
-local currentRefresh = nil
+local CVarList      = {}
+local CVarTable     = {}
+local FilteredTable = {}
+
+local activeListFrame   = nil
+local activeFilterBox   = nil
+local refreshDebounce   = nil
+local REFRESH_DELAY     = 0.2
+
+local function BuildCVarList()
+    wipe(CVarList)
+    local commands = ConsoleGetAllCommands()
+    for _, info in ipairs(commands) do
+        if info.commandType == 0
+        and info.category  ~= 0
+        and info.category  ~= 8
+        and not info.command:lower():find("debug")
+        then
+            CVarList[info.command] = { description = info.help or "" }
+        end
+    end
+end
+
+local function GetPrettyCVar(cvar)
+    local value, default = C_CVar_GetCVarInfo(cvar)
+    if not default or not value then return "", "", true end
+    local isFloat = strmatch(value, "^-?%d+%.%d+$")
+    if isFloat then
+        value = format("%.2f", value):gsub("%.?0+$", "")
+    end
+    local isDefault = (tonumber(value) and tonumber(default))
+        and (value - default == 0)
+        or  (value == default)
+    return value, default, isDefault
+end
+
+local function RefreshCVarList()
+    wipe(CVarTable)
+    BuildCVarList()
+    for cvar, tbl in pairs(CVarList) do
+        local value, default, isDefault = GetPrettyCVar(cvar)
+        if not (type(value) == "string" and (value:byte(2) == 1 or value:byte(1) == 2)) then
+            tinsert(CVarTable, {
+                cvar,
+                cvar,
+                tbl.description or "",
+                isDefault and value or ("|cffff0000" .. value .. "|r"),
+            })
+        end
+    end
+end
+
+-- ── Filter ─────────────────────────────────────────────────────────────────
+
+local function Literalize(str)
+    return str:gsub("[%(%)%.%%%+%-%*%?%[%]%^%$]", "%%%1")
+end
+
+local function UnCase(c)
+    return "[" .. strlower(c) .. strupper(c) .. "]"
+end
+
+local function ApplyFilter()
+    if not activeListFrame then return end
+    local text = activeFilterBox and activeFilterBox:GetText() or ""
+    if text == "" then
+        activeListFrame:SetItems(CVarTable)
+    else
+        local pattern = Literalize(text):gsub("%a", UnCase)
+        wipe(FilteredTable)
+        for i = 1, #CVarTable do
+            local row = CVarTable[i]
+            for j = 2, #row - 1 do
+                local _, replacements = row[j]:gsub(pattern, "")
+                if replacements > 0 then
+                    local newrow = { row[1], [#row] = row[#row] }
+                    for k = 2, #row - 1 do
+                        newrow[k] = row[k]:gsub(pattern, "|cffff0000%1|r")
+                    end
+                    tinsert(FilteredTable, newrow)
+                    break
+                end
+            end
+        end
+        activeListFrame:SetItems(FilteredTable)
+    end
+end
+
+-- ── Debounced refresh + single-row fast path ───────────────────────────────
+
+local function RefreshSingleRow(cvar)
+    if not activeListFrame or not cvar or cvar == "" then return false end
+    for _, row in ipairs(CVarTable) do
+        if row[1] == cvar then
+            local value, default, isDefault = GetPrettyCVar(cvar)
+            row[4] = isDefault and value or ("|cffff0000" .. value .. "|r")
+            ApplyFilter()
+            return true
+        end
+    end
+    return false
+end
+
+local function RequestCVarRefresh(changedKey)
+    if not activeListFrame then return end
+    if changedKey and RefreshSingleRow(changedKey) then return end
+    if refreshDebounce then refreshDebounce:Cancel() end
+    refreshDebounce = C_Timer_NewTimer(REFRESH_DELAY, function()
+        refreshDebounce = nil
+        if activeListFrame and activeListFrame:IsVisible() then
+            RefreshCVarList()
+            ApplyFilter()
+        end
+    end)
+end
 
 -- Refresh live when CVars change while the browser is visible
-hooksecurefunc("SetCVar",    function() if currentRefresh then currentRefresh() end end)
-hooksecurefunc("ConsoleExec", function() if currentRefresh then currentRefresh() end end)
+hooksecurefunc("SetCVar", function(cvar) RequestCVarRefresh(cvar) end)
+hooksecurefunc("ConsoleExec", function(cmd)
+    RequestCVarRefresh(cmd and cmd:match("^(%S+)") or nil)
+end)
 
 -- Hide the inline editor when entering combat
 local combatGuard = CreateFrame("Frame")
@@ -38,9 +156,8 @@ GUIFrame:RegisterContent("CVarBrowser", function(scrollChild, yOffset)
 
     -- ── About card ──────────────────────────────────────────────────────────
 
-    local aboutCard = GUIFrame:CreateCard(scrollChild, "CVar Browser", yOffset)
-    aboutCard:AddLabel("Browse and modify all game CVars. Values shown in red are non-default. Hover a row for details; double-click a value to edit it.")
-    yOffset = yOffset + aboutCard:GetContentHeight() + Theme.paddingLarge
+    yOffset = GUIFrame:AddAboutCard(scrollChild, yOffset, "CVar Browser",
+        "Browse and modify all game CVars. Values shown in red are non-default. Hover a row for details; double-click a value to edit it.")
 
     -- ── Filter card (themed bgDark background matching the list) ────────────
 
@@ -91,7 +208,7 @@ GUIFrame:RegisterContent("CVarBrowser", function(scrollChild, yOffset)
     -- Subtract paddingLarge so scrollChild:SetHeight == contentArea height -> outer scrollbar hidden
     local listHeight  = math.max(200, areaHeight - yOffset - Theme.paddingSmall - Theme.paddingLarge)
 
-    local ListFrame = addon:CreateScrollList(scrollChild, listWidth, listHeight,
+    local ListFrame = GUIFrame:CreateScrollList(scrollChild, listWidth, listHeight,
         { { "Name", 185 }, { "Description", 235, "LEFT" }, { "Value", 90, "RIGHT" } })
     ListFrame:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", Theme.paddingMedium, -yOffset)
 
@@ -111,99 +228,11 @@ GUIFrame:RegisterContent("CVarBrowser", function(scrollChild, yOffset)
         end)
     end
 
-    -- ── CVar data ──────────────────────────────────────────────────────────
+    -- Publish live refs for the file-level refresh delegates
+    activeListFrame = ListFrame
+    activeFilterBox = FilterBox
 
-    local CVarList      = {}
-    local CVarTable     = {}
-    local FilteredTable = {}
-
-    local function BuildCVarList()
-        wipe(CVarList)
-        local commands = ConsoleGetAllCommands()
-        for _, info in ipairs(commands) do
-            if info.commandType == 0
-            and info.category  ~= 0
-            and info.category  ~= 8
-            and not info.command:lower():find("debug")
-            then
-                CVarList[info.command] = { description = info.help or "" }
-            end
-        end
-    end
-
-    local function GetPrettyCVar(cvar)
-        local value, default = C_CVar_GetCVarInfo(cvar)
-        if not default or not value then return "", "", true end
-        local isFloat = strmatch(value, "^-?%d+%.%d+$")
-        if isFloat then
-            value = format("%.2f", value):gsub("%.?0+$", "")
-        end
-        local isDefault = (tonumber(value) and tonumber(default))
-            and (value - default == 0)
-            or  (value == default)
-        return value, default, isDefault
-    end
-
-    local function RefreshCVarList()
-        wipe(CVarTable)
-        BuildCVarList()
-        for cvar, tbl in pairs(CVarList) do
-            local value, default, isDefault = GetPrettyCVar(cvar)
-            if not (type(value) == "string" and (value:byte(2) == 1 or value:byte(1) == 2)) then
-                tinsert(CVarTable, {
-                    cvar,
-                    cvar,
-                    tbl.description or "",
-                    isDefault and value or ("|cffff0000" .. value .. "|r"),
-                })
-            end
-        end
-    end
-
-    local function Literalize(str)
-        return str:gsub("[%(%)%.%%%+%-%*%?%[%]%^%$]", "%%%1")
-    end
-
-    local function UnCase(c)
-        return "[" .. strlower(c) .. strupper(c) .. "]"
-    end
-
-    local function FilterCVarList()
-        local text = FilterBox:GetText()
-        if text == "" then
-            ListFrame:SetItems(CVarTable)
-        else
-            local pattern = Literalize(text):gsub("%a", UnCase)
-            wipe(FilteredTable)
-            for i = 1, #CVarTable do
-                local row = CVarTable[i]
-                for j = 2, #row - 1 do
-                    local _, replacements = row[j]:gsub(pattern, "")
-                    if replacements > 0 then
-                        local newrow = { row[1], [#row] = row[#row] }
-                        for k = 2, #row - 1 do
-                            newrow[k] = row[k]:gsub(pattern, "|cffff0000%1|r")
-                        end
-                        tinsert(FilteredTable, newrow)
-                        break
-                    end
-                end
-            end
-            ListFrame:SetItems(FilteredTable)
-        end
-    end
-
-    FilterBox:SetScript("OnTextChanged", FilterCVarList)
-
-    local function FilteredRefresh()
-        if ListFrame:IsVisible() then
-            RefreshCVarList()
-            FilterCVarList()
-        end
-    end
-
-    -- Register as the active refresh delegate for file-level hooks
-    currentRefresh = FilteredRefresh
+    FilterBox:SetScript("OnTextChanged", ApplyFilter)
 
     RefreshCVarList()
     ListFrame:SetItems(CVarTable)
@@ -238,9 +267,13 @@ GUIFrame:RegisterContent("CVarBrowser", function(scrollChild, yOffset)
         self:Hide()
     end)
     CVarInputBox:SetScript("OnEnterPressed", function(self)
+        if InCombatLockdown() then
+            print("|cff" .. Theme.errorHex .. "TF_QoL|r CVars cannot be modified in combat.")
+            return
+        end
         C_CVar_SetCVar(self.cvar, self:GetText() or "")
         self:Hide()
-        FilteredRefresh()
+        RequestCVarRefresh(self.cvar)
     end)
     CVarInputBox:SetScript("OnHide", function(self)
         CVarInputBoxBlocker:Hide()
@@ -310,9 +343,14 @@ GUIFrame:RegisterContent("CVarBrowser", function(scrollChild, yOffset)
 
     -- ── Cleanup ─────────────────────────────────────────────────────────────
 
-    -- Clear the refresh delegate when this content is torn down
+    -- Clear the live refs (and any pending debounced rebuild) on teardown
     GUIFrame:RegisterContentCleanup("CVarBrowser", function()
-        currentRefresh = nil
+        activeListFrame = nil
+        activeFilterBox = nil
+        if refreshDebounce then
+            refreshDebounce:Cancel()
+            refreshDebounce = nil
+        end
     end)
 
     return yOffset

@@ -16,7 +16,8 @@ local frame = CreateFrame("Frame")
 
 -- On-screen display frame
 local displayFrame = CreateFrame("Frame", "TFQoL_ItemUpgradeReminderFrame", UIParent)
-displayFrame:SetPoint("TOPLEFT", UIParent, "CENTER", 0, 150)
+-- No hardcoded anchor here: position comes from TFQoLDB via UpdatePosition
+-- on enable (Core.lua holds the defaults).
 displayFrame:SetSize(16, 16)
 displayFrame:Hide()
 
@@ -126,6 +127,15 @@ local function GetUpgradeTrack(bonusIds)
 end
 
 local function GetBonusIds(link)
+    -- Item-string field layout (colon-separated, after the "item:" prefix):
+    --   1 itemID, 2 enchantID, 3-6 gemIDs, 7 suffixID, 8 uniqueID,
+    --   9 linkLevel, 10 specializationID, 11 modifiersMask, 12 upgradeID (legacy),
+    --   13 numBonusIDs, 14..13+N bonusIDs (further trailing fields ignored).
+    -- Only the bonus-ID block is read: index 13 is the bonus count and the
+    -- following N entries are matched against bonusToTierMap/craftedBonusIds.
+    -- Empty fields split as 0/"", so tonumber() defaults them safely. Kept as
+    -- a manual split (rather than C_Item bonus-ID APIs) so uncached links
+    -- resolve identically to the previous implementation.
     local itemString = string.match(link, "item:([%-?%d:]+)")
     if not itemString then return {} end
 
@@ -207,9 +217,7 @@ end
 -- ── FONT / POSITION ───────────────────────────────────────────
 
 function module:UpdateFont()
-    local db = TFQoLDB.itemUpgradeReminder
-    local flags = (TFQoLDB.global.slugRendering == true) and "OUTLINE,SLUG" or "OUTLINE"
-    displayFrame.text:SetFont(addon:ResolveFont(db.fontFamily), db.fontSize, flags)
+    addon:ApplyAlertFont(displayFrame.text, TFQoLDB.itemUpgradeReminder)
 end
 
 function module:UpdatePosition()
@@ -221,6 +229,7 @@ end
 function module:SetTestMode(enabled)
     testModeActive = enabled
     if enabled then
+        self:UpdatePosition()
         displayFrame.text:SetText(
             "Upgrade |cff0070dd[Verdant Gladiator's Helm]|r to 268 for zero crests!\n" ..
             "Upgrade |cffa335ee[Spymistress's Wristwraps]|r to 263 for zero crests!")

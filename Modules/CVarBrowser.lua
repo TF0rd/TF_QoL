@@ -12,8 +12,10 @@ local C_CVar_GetCVar     = C_CVar.GetCVar
 local C_CVar_GetCVarInfo = C_CVar.GetCVarInfo
 
 -- ── CVar Modification Tracking ────────────────────────────────
--- Hooks are set at file load (before SavedVariables), traces stored in TempTraces
--- until OnInitialize commits them to the DB.
+-- Hooks are installed once from OnEnable (never at file load, so the module
+-- stays disableable); traces stored in TempTraces until OnInitialize commits
+-- them to the DB. The TraceCVar write path is gated on the module's enabled
+-- state since hooksecurefunc hooks cannot be removed.
 
 local SVLoaded   = false
 local TempTraces = {}   -- [cvar:lower()] = { source = "path:line", value = "val" }
@@ -24,6 +26,10 @@ local function CVarExists(cvar)
 end
 
 local function TraceCVar(cvar, value, ...)
+    -- Disabled module traces nothing: hooks are permanent once installed,
+    -- so the write path is gated here.
+    if not addon:IsModuleEnabled("CVarBrowser") then return end
+    if type(cvar) ~= "string" or cvar == "" then return end
     if not CVarExists(cvar) then return end
 
     local trace = debugstack(2)
@@ -45,20 +51,16 @@ local function TraceCVar(cvar, value, ...)
     ) then
         local realValue = C_CVar_GetCVar(cvar)
         local entry     = source .. ":" .. lineNum
+        local key       = cvar:lower()
         if SVLoaded then
-            TFQoLDB.cvarBrowser.modifiedCVars[cvar:lower()] = entry
+            TFQoLDB.cvarBrowser.modifiedCVars[key] = entry
         else
-            TempTraces[cvar:lower()] = { source = entry, value = realValue }
+            TempTraces[key] = { source = entry, value = realValue }
         end
     end
 end
 
--- Hook both the legacy global and the C_ namespace version
-hooksecurefunc("SetCVar", TraceCVar)
-if C_CVar and C_CVar.SetCVar then
-    hooksecurefunc(C_CVar, "SetCVar", TraceCVar)
-end
-hooksecurefunc("ConsoleExec", function(msg)
+local function TraceConsoleExec(msg)
     local cmd, cvar, value = msg:match("^(%S+)%s+(%S+)%s*(%S*)")
     if cmd then
         if cmd:lower() == "set" then
@@ -67,7 +69,22 @@ hooksecurefunc("ConsoleExec", function(msg)
             TraceCVar(cmd, cvar)
         end
     end
-end)
+end
+
+-- Hooks are permanent once installed (hooksecurefunc cannot be unhooked),
+-- so they are installed once from OnEnable and TraceCVar gates on the
+-- module's enabled state. This keeps the module fully disableable.
+local hooked = false
+local function InstallHooks()
+    if hooked then return end
+    hooked = true
+    -- Hook both the legacy global and the C_ namespace version
+    hooksecurefunc("SetCVar", TraceCVar)
+    if C_CVar and C_CVar.SetCVar then
+        hooksecurefunc(C_CVar, "SetCVar", TraceCVar)
+    end
+    hooksecurefunc("ConsoleExec", TraceConsoleExec)
+end
 
 -- ── MODULE LIFECYCLE ──────────────────────────────────────────
 
@@ -77,12 +94,15 @@ function module:OnInitialize()
     for cvar, trace in pairs(TempTraces) do
         local currentValue = C_CVar_GetCVar(cvar)
         if trace.value == currentValue then
-            TFQoLDB.cvarBrowser.modifiedCVars[cvar] = trace.source
+            TFQoLDB.cvarBrowser.modifiedCVars[cvar:lower()] = trace.source
         end
     end
 end
 
-function module:OnEnable()  end
+function module:OnEnable()
+    InstallHooks()
+end
+
 function module:OnDisable() end
 
 -- ── Public API ────────────────────────────────────────────────

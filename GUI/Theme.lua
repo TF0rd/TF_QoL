@@ -50,6 +50,9 @@ local ThemeDefaults = {
     error          = { 0.9529, 0.5451, 0.6588, 1 },  -- Red       #f38ba8
     success        = { 0.6510, 0.8902, 0.6314, 1 },  -- Green     #a6e3a1
 
+    -- ── Disabled ────────────────────────────────────────────────────────────────────
+    disabledAlpha  = 0.5,
+
     -- ── Layout Sizes ────────────────────────────────────────────────────────────────
     headerHeight   = 32,
     footerHeight   = 24,
@@ -87,6 +90,19 @@ addon.Theme = {}
 for k, v in pairs(ThemeDefaults) do
     if type(v) == "table" then addon.Theme[k] = CopyColor(v) else addon.Theme[k] = v end
 end
+
+-- ── Hex string tokens for |cff color codes (derived so they can't drift) ──────────
+local function ToHex(c)
+    local r = math.floor((c[1] or 1) * 255 + 0.5)
+    local g = math.floor((c[2] or 1) * 255 + 0.5)
+    local b = math.floor((c[3] or 1) * 255 + 0.5)
+    return string.format("%02x%02x%02x", r, g, b)
+end
+
+addon.Theme.successHex = ToHex(addon.Theme.success)
+addon.Theme.errorHex   = ToHex(addon.Theme.error)
+addon.Theme.yellowHex  = ToHex(addon.Theme.yellow)
+addon.Theme.accentHex  = ToHex(addon.Theme.accent)
 
 -- ════════════════════════════════════════════════════════════════════════════════════
 -- Part 2b: Item Level Tier Colors

@@ -242,6 +242,10 @@ local function updateAllowedHealth(force)
     local playerLevel = UnitLevel("player")
     local maxHP = UnitHealthMax("player") or 0
 
+    -- Secret-wrapped reads (M+/raid/PvP instances) cannot feed healFunc
+    -- arithmetic: keep the previous list instead of computing on secrets.
+    if addon.IsSecretValue and addon:IsSecretValue(maxHP) then return end
+
     if not force then
         local levelChanged = playerLevel ~= lastHealthPlayerLevel
         local hpChanged = false
@@ -298,6 +302,7 @@ local function healthCooldownRemaining(entry)
         local inBook = C_SpellBook.IsSpellInSpellBook(entry.id)
         if not inBook then return math.huge end
         local start, duration = getHealthSpellCooldown(entry.id)
+        if addon.IsSecretValue and (addon:IsSecretValue(start) or addon:IsSecretValue(duration)) then return math.huge end
         if start == 0 or duration == 0 then return 0 end
         local remain = (start + duration) - GetTime()
         return remain > 0 and remain or 0
@@ -305,6 +310,7 @@ local function healthCooldownRemaining(entry)
     local itemID = entry.id
     if not itemID then return 0 end
     local start, duration = C_Item.GetItemCooldown(itemID)
+    if addon.IsSecretValue and (addon:IsSecretValue(start) or addon:IsSecretValue(duration)) then return math.huge end
     if not start or start == 0 or not duration or duration == 0 then return 0 end
     local remain = (start + duration) - GetTime()
     return remain > 0 and remain or 0
@@ -312,25 +318,41 @@ end
 
 -- ── Health macro build ─────────────────────────────────────────
 
+-- Cached per talent configID: the C_Traits tree walk below is too
+-- expensive to run per candidate inside selectHealthSequence().
+local demonicTalentCache = {}
+
+local function InvalidateDemonicTalentCache()
+    demonicTalentCache = {}
+end
+
 local function hasDemonicTalent()
     if not C_ClassTalents or not C_Traits or not C_Traits.GetConfigInfo then return false end
     local configID = C_ClassTalents.GetActiveConfigID()
     if not configID then return false end
+    local cached = demonicTalentCache[configID]
+    if cached ~= nil then return cached end
+    local result = false
     local cfg = C_Traits.GetConfigInfo(configID)
-    if not cfg or not cfg.treeIDs or not cfg.treeIDs[1] then return false end
-    local treeID = cfg.treeIDs[1]
-    local nodes = C_Traits.GetTreeNodes(treeID) or {}
-    for _, nodeID in ipairs(nodes) do
-        local nodeInfo = C_Traits.GetNodeInfo(configID, nodeID)
-        if nodeInfo and nodeInfo.activeEntry and (nodeInfo.ranksPurchased or 0) > 0 then
-            local entryInfo = C_Traits.GetEntryInfo(configID, nodeInfo.activeEntry.entryID)
-            if entryInfo and entryInfo.definitionID then
-                local def = C_Traits.GetDefinitionInfo(entryInfo.definitionID)
-                if def and def.spellID == DEMONIC_HEALTHSTONE_TALENT_SPELL then return true end
+    if cfg and cfg.treeIDs and cfg.treeIDs[1] then
+        local treeID = cfg.treeIDs[1]
+        local nodes = C_Traits.GetTreeNodes(treeID) or {}
+        for _, nodeID in ipairs(nodes) do
+            local nodeInfo = C_Traits.GetNodeInfo(configID, nodeID)
+            if nodeInfo and nodeInfo.activeEntry and (nodeInfo.ranksPurchased or 0) > 0 then
+                local entryInfo = C_Traits.GetEntryInfo(configID, nodeInfo.activeEntry.entryID)
+                if entryInfo and entryInfo.definitionID then
+                    local def = C_Traits.GetDefinitionInfo(entryInfo.definitionID)
+                    if def and def.spellID == DEMONIC_HEALTHSTONE_TALENT_SPELL then
+                        result = true
+                        break
+                    end
+                end
             end
         end
     end
-    return false
+    demonicTalentCache[configID] = result
+    return result
 end
 
 local lastHealthMacroKey
@@ -661,20 +683,6 @@ local drinkList = {
     { key = "CarbonatedWater",      id = 81924, requiredLevel = 32, mana = 0, manaPercent = 4, manaDuration = 20 },
 }
 
--- ── Mana potion list (for combat use in drink macro) ───────────
-
-local manaPotions = {
-    { key = "LightfusedManaPotion3", id = 241300, requiredLevel = 81, mana = 26200 },
-    { key = "LightfusedManaPotion2", id = 241301, requiredLevel = 81, mana = 22362 },
-    { key = "AlgariManaPotion3",     id = 212241, requiredLevel = 71, mana = 270000 },
-    { key = "AlgariManaPotion2",     id = 212240, requiredLevel = 71, mana = 234782 },
-    { key = "AlgariManaPotion1",     id = 212239, requiredLevel = 71, mana = 204158 },
-    { key = "SurvivalManaPotion",    id = 224022, requiredLevel = 0,  mana = 0, manaPercent = 20 },
-    { key = "SlumberingSoulSerum3",  id = 212247, requiredLevel = 71, mana = 375000 },
-    { key = "SlumberingSoulSerum2",  id = 212246, requiredLevel = 71, mana = 326086 },
-    { key = "SlumberingSoulSerum1",  id = 212245, requiredLevel = 71, mana = 283553 },
-}
-
 -- ── Drink sorting ──────────────────────────────────────────────
 
 local function getDrinkManaValue(drink, maxMana)
@@ -729,11 +737,12 @@ local function updateAllowedDrinks()
 
     local filtered = {}
     local mageFoods = {}
+    local _, playerClass = UnitClass("player")
     for i = 1, #drinkList do
         local drink = drinkList[i]
         local req = drink.requiredLevel
         local dMana = drink._sortMana or getDrinkManaValue(drink, maxMana)
-        local _, cmEnglishClass = UnitClass("player"); local isMageRefresh = drink.id == 190336 and cmEnglishClass == "MAGE"
+        local isMageRefresh = drink.id == 190336 and playerClass == "MAGE"
 
         if req <= playerLevel then
             if not (earthen and not drink.isEarthenFood)
@@ -741,7 +750,7 @@ local function updateAllowedDrinks()
                and not drink.isHealthOnly
                and not (drink.isSpell and not C_SpellBook.IsSpellInSpellBook(drink.id))
             then
-                local obj = newItem(drink.id, drink.desc, drink.isSpell)
+                local obj = newItem(drink.id, nil, drink.isSpell)
                 obj._drinkData = drink
                 if drink.isMageFood then
                     mageFoods[#mageFoods + 1] = obj
@@ -825,7 +834,6 @@ end
 -- ── Drink macro build ──────────────────────────────────────────
 
 local lastDrinkItemPlaced
-local lastManaPotionPlaced
 
 local function buildDrinkMacro()
     local db = addon.db and addon.db.consumableMacros
@@ -860,7 +868,6 @@ local function buildDrinkMacro()
 
     EditMacro(DRINK_MACRO_NAME, DRINK_MACRO_NAME, nil, table.concat(parts, "\n"))
     lastDrinkItemPlaced = foundItem
-    lastManaPotionPlaced = nil
 end
 
 UpdateDrinkMacro = function(ignoreCombat)
@@ -1012,6 +1019,7 @@ local function OnEvent(self, event, arg1)
         end
 
     elseif event == "SPELLS_CHANGED" or event == "PLAYER_TALENT_UPDATE" then
+        InvalidateDemonicTalentCache()
         if db.drinkMacroEnabled then
             updateAllowedDrinks()
             UpdateDrinkMacro(false)
@@ -1052,7 +1060,6 @@ function module:OnDisable()
     eventFrame:UnregisterAllEvents()
     lastHealthMacroKey = nil
     lastDrinkItemPlaced = nil
-    lastManaPotionPlaced = nil
     notifyPreviewListeners(healthPreviewListeners, {})
     notifyPreviewListeners(drinkPreviewListeners, {})
     notifyPIPreviewListeners(nil)
@@ -1069,7 +1076,6 @@ end
 
 function module:RefreshDrinkMacro()
     lastDrinkItemPlaced = nil
-    lastManaPotionPlaced = nil
     UpdateDrinkMacro(false)
 end
 

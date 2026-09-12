@@ -10,9 +10,8 @@ GUIFrame:RegisterContent("ItemUpgradeReminder", function(scrollChild, yOffset)
 
     -- ── About card ──────────────────────────────────────────────────────────
 
-    local aboutCard = GUIFrame:CreateCard(scrollChild, "About", yOffset)
-    aboutCard:AddLabel("Prints a chat message for each equipped item that can be upgraded to a higher item level for gold only (no crests required), based on your character's and account's high-watermark for that slot.")
-    yOffset = yOffset + aboutCard:GetContentHeight() + Theme.paddingLarge
+    yOffset = GUIFrame:AddAboutCard(scrollChild, yOffset, "About",
+        "Prints a chat message for each equipped item that can be upgraded to a higher item level for gold only (no crests required), based on your character's and account's high-watermark for that slot.")
 
     -- ── Module header with custom setting ──────────────────────────────────
 
@@ -34,8 +33,8 @@ GUIFrame:RegisterContent("ItemUpgradeReminder", function(scrollChild, yOffset)
 
     -- ── Settings cards ──────────────────────────────────────────────────────
 
-    yOffset = GUIFrame:AddFontCard(scrollChild, yOffset, "itemUpgradeReminder")
-    yOffset = GUIFrame:AddPositionCard(scrollChild, yOffset, "itemUpgradeReminder")
+    yOffset = GUIFrame:AddModuleSettingsCards(scrollChild, yOffset,
+        "itemUpgradeReminder", { "font", "position" })
 
     return yOffset
 end)
