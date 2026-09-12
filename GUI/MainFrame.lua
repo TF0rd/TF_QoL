@@ -39,6 +39,7 @@ GUIFrame.SidebarConfig = {
                 { id = "OCETag",              text = "OCE Group Tag" },
                 { id = "GroupJoinedReminder",  text = "Group Joined Reminder" },
                 { id = "ItemUpgradeReminder", text = "Item Upgrade Reminder" },
+                { id = "ConsumableReminder", text = "Consumable Reminder" },
                 { id = "StealthIndicator",    text = "Stealth Indicator" },
                 { id = "BlizzardFrames",      text = "Blizzard Frames" },
             }

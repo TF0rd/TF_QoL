@@ -25,6 +25,7 @@ local defaultDB = {
         ["ConsumableMacros"] = false,
         ["CharacterViewer"] = true,
         ["MuteSounds"] = false,
+        ["ConsumableReminder"] = false,
     },
     -- ── Global settings ─────────────────────────────────────
     global = {
@@ -153,6 +154,21 @@ local defaultDB = {
         trinkets = {},
         emotes = {},
         customSounds = {},
+    },
+    -- ── Consumable Reminder defaults ────────────────────────
+    -- NOTE: no `items` key here on purpose. The module seeds its starter
+    -- list when db.items is nil; MergeDefaults would resurrect user-deleted
+    -- entries on every reload if the list lived in defaults.
+    consumableReminder = {
+        fontSize = 16,
+        fontFamily = STANDARD_TEXT_FONT,
+        posX = 250,
+        posY = 150,
+        anchorFrameType = "UIPARENT",
+        anchorFrame = "",
+        selfPoint = "TOPLEFT",
+        anchorPoint = "CENTER",
+        onlySilvermoon = false,
     },
 }
 

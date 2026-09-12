@@ -36,6 +36,7 @@ Modules\ActionBarToggle.lua
 Modules\BlizzardFrames.lua
 Modules\MountActions.lua
 Modules\ConsumableMacros.lua
+Modules\ConsumableReminder.lua
 Modules\CharacterViewer.lua
 Modules\MuteSounds.lua
 
@@ -54,6 +55,7 @@ GUI\Tabs\ActionBarToggle.lua
 GUI\Tabs\BlizzardFrames.lua
 GUI\Tabs\MountActions.lua
 GUI\Tabs\ConsumableMacros.lua
+GUI\Tabs\ConsumableReminder.lua
 GUI\Tabs\CharacterViewer.lua
 GUI\Tabs\MuteSounds.lua
 

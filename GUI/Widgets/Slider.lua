@@ -1,6 +1,7 @@
 -- ════════════════════════════════════════════════════════════════════════════════════
 -- Widget: Slider (Horizontal slider with steppers, value editbox, and thumb animation)
--- Usage: GUIFrame:CreateSlider(parent, labelText, min, max, step, value, callback)
+-- Usage: GUIFrame:CreateSlider(parent, labelText, min, max, step, value, callback[, compact])
+-- (compact hides the label and raises the track for header-labelled columns)
 -- ════════════════════════════════════════════════════════════════════════════════════
 
 local _, addon = ...
@@ -22,7 +23,7 @@ local STEPPER_TEX = "Interface\\AddOns\\TF_QoL\\Media\\GUITextures\\collapse.tga
 -- Part 2: CreateSlider (Main factory — row with label, track, thumb, steppers, editbox)
 -- ════════════════════════════════════════════════════════════════════════════════════
 
-function GUIFrame:CreateSlider(parent, labelText, min, max, step, value, callback)
+function GUIFrame:CreateSlider(parent, labelText, min, max, step, value, callback, compact)
     local Theme = addon.Theme
     min   = tonumber(min)   or 0
     max   = tonumber(max)   or 100
@@ -42,12 +43,20 @@ function GUIFrame:CreateSlider(parent, labelText, min, max, step, value, callbac
     label:SetTextColor(Theme.textMuted[1], Theme.textMuted[2], Theme.textMuted[3], 1)
     row.label = label
 
+    -- Compact mode (a column header explains the slider): hide the label
+    -- and raise the track so the row can shrink.
+    local trackY = -22
+    if compact then
+        label:Hide()
+        trackY = -12
+    end
+
     -- ── Slider Background Track ─────────────────────────────────────────────────────
 
     local sliderBG = CreateFrame("Frame", nil, row, "BackdropTemplate")
     sliderBG:SetHeight(8)
-    sliderBG:SetPoint("TOPLEFT",  row, "TOPLEFT",  68, -22)
-    sliderBG:SetPoint("TOPRIGHT", row, "TOPRIGHT", -18, -22)
+    sliderBG:SetPoint("TOPLEFT",  row, "TOPLEFT",  68, trackY)
+    sliderBG:SetPoint("TOPRIGHT", row, "TOPRIGHT", -18, trackY)
     sliderBG:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
     sliderBG:SetBackdropColor(Theme.bgLight[1], Theme.bgLight[2], Theme.bgLight[3], 1)
     sliderBG:SetBackdropBorderColor(Theme.border[1], Theme.border[2], Theme.border[3], 1)
@@ -57,8 +66,8 @@ function GUIFrame:CreateSlider(parent, labelText, min, max, step, value, callbac
 
     local slider = CreateFrame("Slider", nil, row, "BackdropTemplate")
     slider:SetHeight(8)
-    slider:SetPoint("TOPLEFT",  row, "TOPLEFT",  77, -22)
-    slider:SetPoint("TOPRIGHT", row, "TOPRIGHT", -27, -22)
+    slider:SetPoint("TOPLEFT",  row, "TOPLEFT",  77, trackY)
+    slider:SetPoint("TOPRIGHT", row, "TOPRIGHT", -27, trackY)
     slider:SetOrientation("HORIZONTAL")
     slider:SetMinMaxValues(min, max)
     slider:SetValueStep(step)
