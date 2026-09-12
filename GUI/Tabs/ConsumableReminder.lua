@@ -388,8 +388,22 @@ GUIFrame:RegisterContent("ConsumableReminder", function(scrollChild, yOffset)
         trackCard:AddLabel("Nothing tracked yet — add your first consumable above.")
     else
         trackCard:AddRow(BuildHeaderRow(trackCard.content, Theme), 16)
-        for index, entry in ipairs(items) do
-            trackCard:AddRow(BuildEntryRow(trackCard.content, mod, Theme, entry, index), ENTRY_H)
+        -- Display order: ascending by lowest item ID. The sort is
+        -- display-only — rows keep their real indices so remove and
+        -- threshold callbacks still hit the right entry.
+        local order = {}
+        for index in ipairs(items) do order[#order + 1] = index end
+        local function LowestID(entry)
+            local low
+            for _, id in ipairs(entry.itemIDs or {}) do
+                id = tonumber(id)
+                if id and (not low or id < low) then low = id end
+            end
+            return low or math.huge
+        end
+        table.sort(order, function(a, b) return LowestID(items[a]) < LowestID(items[b]) end)
+        for _, index in ipairs(order) do
+            trackCard:AddRow(BuildEntryRow(trackCard.content, mod, Theme, items[index], index), ENTRY_H)
         end
     end
 

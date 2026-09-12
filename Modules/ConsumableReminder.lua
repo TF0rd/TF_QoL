@@ -93,6 +93,17 @@ local function IsInSilvermoon()
     return false
 end
 
+-- Combat / Mythic+ suppression: no reminder while fighting or mid-key.
+-- Both are cheap synchronous checks (no bag scans, no item lookups).
+local function IsSuppressed()
+    if InCombatLockdown and InCombatLockdown() then return true end
+    if C_ChallengeMode and C_ChallengeMode.IsChallengeModeActive
+        and C_ChallengeMode.IsChallengeModeActive() then
+        return true
+    end
+    return false
+end
+
 local function GetBagCount(itemID)
     local count = C_Item.GetItemCount(itemID, false, false)
     if addon:IsSecretValue(count) then return nil end
@@ -250,13 +261,19 @@ end
 -- ── Core logic ───────────────────────────────────────────────
 
 -- Minimum seconds between background-event refreshes.
-local REFRESH_THROTTLE = 0.2
+local REFRESH_THROTTLE = 1.0
 local lastRefresh = 0
 
 local function Refresh(force)
     if not moduleEnabled or testModeActive then return end
     local db = GetDB()
     if not db then return end
+    -- Suppression first: in combat or mid-key this is two cheap API
+    -- calls, then Hide and out — no counts, no text, nothing else runs.
+    if IsSuppressed() then
+        displayFrame:Hide()
+        return
+    end
     -- Silvermoon gate first: outside the city this is one zone check, then
     -- Hide and out — no counts, no text updates, nothing else runs.
     if db.onlySilvermoon and not IsInSilvermoon() then
@@ -341,7 +358,14 @@ frame:SetScript("OnEvent", function(_, event, ...)
         end
     end
 
-    Refresh()
+    -- Combat / key transitions skip the throttle: the frame must hide
+    -- the instant a fight or key starts, and reappear the instant it ends.
+    local instant = event == "PLAYER_REGEN_DISABLED"
+        or event == "PLAYER_REGEN_ENABLED"
+        or event == "CHALLENGE_MODE_START"
+        or event == "CHALLENGE_MODE_COMPLETED"
+        or event == "CHALLENGE_MODE_RESET"
+    Refresh(instant or nil)
 end)
 
 -- ── Module Lifecycle ─────────────────────────────────────────
@@ -365,6 +389,14 @@ function module:OnEnable()
     frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
     frame:RegisterEvent("ZONE_CHANGED")
     frame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+    -- Combat / key transitions: hide the instant a fight or key starts,
+    -- re-evaluate the instant it ends. (Unknown names on older clients
+    -- simply never fire — harmless.)
+    frame:RegisterEvent("PLAYER_REGEN_DISABLED")
+    frame:RegisterEvent("PLAYER_REGEN_ENABLED")
+    frame:RegisterEvent("CHALLENGE_MODE_START")
+    frame:RegisterEvent("CHALLENGE_MODE_COMPLETED")
+    frame:RegisterEvent("CHALLENGE_MODE_RESET")
     -- Run immediately if we're already past the loading screen (module enabled mid-session).
     if IsLoggedIn() then
         Refresh()
