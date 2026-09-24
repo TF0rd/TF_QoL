@@ -133,6 +133,8 @@ local defaultDB = {
         preferMageFood = true,
         piMacroEnabled = false,
         piMacroTemplate = "",
+        tricksMacroEnabled = false,
+        tricksMacroTemplate = "",
     },
     -- ── Character Viewer defaults ──────────────────────────
     characterViewer = {

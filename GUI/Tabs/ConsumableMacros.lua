@@ -166,7 +166,7 @@ local function CreateMacroPreviewPanel(parent, title)
     return panel
 end
 
-local function CreatePIMacroEditorPanel(parent, title)
+local function CreateMacroEditorPanel(parent, title)
     local Theme = addon.Theme
     local panel = CreateFrame("Frame", nil, parent)
     panel:SetHeight(140)
@@ -334,14 +334,14 @@ GUIFrame:RegisterContent("ConsumableMacros", function(scrollChild, yOffset)
     local healthstoneToggle
     local preferMage
     local healthPreview, drinkPreview
-    local piEditor
-    local refreshHealthPreview, refreshDrinkPreview, refreshPIBody
+    local piEditor, tricksEditor
+    local refreshHealthPreview, refreshDrinkPreview, refreshPIBody, refreshTricksBody
 
     -- ── Module Header (enable toggle + overlay) ──────────────────
 
     local headerCard = GUIFrame:CreateCard(scrollChild, "Macros", yOffset)
     GUIFrame:AddModuleHeader(headerCard, "ConsumableMacros")
-    headerCard:AddLabel("Auto-updating macros for Health Potions and Drinks, plus a Power Infusion target helper. Macros update when you loot, level up, or change spec.")
+    headerCard:AddLabel("Auto-updating macros for Health Potions and Drinks, plus Power Infusion and Auto Tricks/MD target helpers. Macros update when you loot, level up, change spec, or change groups.")
     yOffset = yOffset + headerCard:GetContentHeight() + Theme.paddingLarge
 
     -- ── Health Potion Macro Card ─────────────────────────────────
@@ -442,7 +442,7 @@ GUIFrame:RegisterContent("ConsumableMacros", function(scrollChild, yOffset)
             left:AddLabel("Target a player and run |cff89b4fa/tf pi|r (or press TFSetPI) to bake their name into your PI macro: mouseover > that player > you. |cff89b4fa{target}|r in the body is replaced with that name.", 60)
         end,
         function(parent)
-            return CreatePIMacroEditorPanel(parent, "PI Macro Body")
+            return CreateMacroEditorPanel(parent, "PI Macro Body")
         end
     )
     piEditor:SetOnChange(function(text)
@@ -450,6 +450,34 @@ GUIFrame:RegisterContent("ConsumableMacros", function(scrollChild, yOffset)
     end)
     piEditor:SetEnabled(db.piMacroEnabled or false)
     yOffset = yOffset + piCard:GetContentHeight() + Theme.paddingLarge
+
+    -- ── Auto Tricks / Misdirection Macro Card ─────────────────────
+
+    local tricksCard
+    tricksCard, tricksEditor = CreateSplitMacroCard(
+        scrollChild,
+        "Auto Tricks / Misdirection Macro",
+        yOffset,
+        function(left)
+            local tricksToggle = GUIFrame:CreateCheckbox(left.content,
+                "Enable Auto Tricks/MD (TFTricksMD)", db.tricksMacroEnabled or false,
+                function(val)
+                    db.tricksMacroEnabled = val
+                    if tricksEditor then tricksEditor:SetEnabled(val) end
+                    if module then module:RefreshTricksMacro() end
+                end)
+            left:AddRow(tricksToggle, 36, Theme.paddingLarge)
+            left:AddLabel("Rogues and hunters only. One-button threat redirect: the addon finds your group tank and bakes their name into TFTricksMD (mouseover > tank > focus > target). Refreshes automatically on group changes, or run |cff89b4fa/tf tricks|r. |cff89b4fa{target}|r is the tank name, |cff89b4fa{spell}|r is your class spell.", 110)
+        end,
+        function(parent)
+            return CreateMacroEditorPanel(parent, "Tricks/MD Macro Body")
+        end
+    )
+    tricksEditor:SetOnChange(function(text)
+        if module then module:SetTricksMacroBody(text) end
+    end)
+    tricksEditor:SetEnabled(db.tricksMacroEnabled or false)
+    yOffset = yOffset + tricksCard:GetContentHeight() + Theme.paddingLarge
 
     -- ── Live preview wiring ──────────────────────────────────────
 
@@ -462,15 +490,20 @@ GUIFrame:RegisterContent("ConsumableMacros", function(scrollChild, yOffset)
     refreshPIBody = function(body)
         if piEditor then piEditor:SetBody(body or "") end
     end
+    refreshTricksBody = function(body)
+        if tricksEditor then tricksEditor:SetBody(body or "") end
+    end
 
     if module then
         module:RegisterHealthPreviewListener("gui", refreshHealthPreview)
         module:RegisterDrinkPreviewListener("gui", refreshDrinkPreview)
         module:RegisterPIPreviewListener("gui", refreshPIBody)
+        module:RegisterTricksPreviewListener("gui", refreshTricksBody)
     else
         refreshHealthPreview({})
         refreshDrinkPreview({})
         refreshPIBody("")
+        refreshTricksBody("")
     end
 
     GUIFrame:RegisterContentCleanup("ConsumableMacros", function()
@@ -478,6 +511,7 @@ GUIFrame:RegisterContent("ConsumableMacros", function(scrollChild, yOffset)
             module:UnregisterHealthPreviewListener("gui")
             module:UnregisterDrinkPreviewListener("gui")
             module:UnregisterPIPreviewListener("gui")
+            module:UnregisterTricksPreviewListener("gui")
         end
     end)
 

@@ -20,6 +20,11 @@ SlashCmdList["TF"] = function(msg)
         if addon:IsModuleEnabled("ConsumableMacros") then
             addon.modules.ConsumableMacros:SetPowerInfusionTarget()
         end
+    elseif msg == "tricks" then
+        -- Auto Tricks/MD helper (Macros module): bake tank into TFTricksMD.
+        if addon:IsModuleEnabled("ConsumableMacros") then
+            addon.modules.ConsumableMacros:SetTricksTarget()
+        end
     elseif msg == "" then
         if addon.GUIFrame then
             addon.GUIFrame:Toggle()
@@ -29,6 +34,7 @@ SlashCmdList["TF"] = function(msg)
         print("  /tf — Open settings")
         print("  /tf char — Toggle Character Viewer")
         print("  /tf pi — Set Power Infusion target")
+        print("  /tf tricks — Set Tricks/MD target to tank")
     end
 end
 

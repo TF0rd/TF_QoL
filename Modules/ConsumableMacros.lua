@@ -1,9 +1,10 @@
 -- ════════════════════════════════════════════════════════════════
 -- Module: ConsumableMacros (display name: "Macros")
 -- Auto-updating macros for Health Potions and Drinks, plus the
--- Power Infusion target helper (/tf pi).
+-- Power Infusion target helper (/tf pi) and the Auto Tricks/MD
+-- tank helper (/tf tricks).
 -- Ported from EnhanceQoL's Food/Health.lua + Food.lua systems.
--- Macro names: TFHealthPotion, TFDrink, TFSetPI, PI
+-- Macro names: TFHealthPotion, TFDrink, TFSetPI, PI, TFSetTricks, TFTricksMD
 -- ════════════════════════════════════════════════════════════════
 
 local _, addon = ...
@@ -973,6 +974,179 @@ local function UpdatePIMacro()
 end
 
 -- ════════════════════════════════════════════════════════════════
+-- Part 3.6: Auto Tricks / Misdirection Helper
+-- ════════════════════════════════════════════════════════════════
+
+-- "No thinking" button for rogues (Tricks of the Trade) and hunters
+-- (Misdirection): the addon finds the group tank and bakes their name
+-- into the TFTricksMD macro. Cast priority: mouseover > baked tank >
+-- focus > current target. Rebuilt automatically on group/role changes;
+-- run /tf tricks (or the TFSetTricks macro) to refresh on demand.
+local TRICKS_MACRO_NAME   = "TFTricksMD"
+local TRICKS_TRIGGER_NAME = "TFSetTricks"
+local TRICKS_TARGET_TOKEN = "{target}"
+local TRICKS_SPELL_TOKEN  = "{spell}"
+local TRICKS_SPELL_BY_CLASS = {
+    ROGUE  = 57934, -- Tricks of the Trade
+    HUNTER = 34477, -- Misdirection
+}
+
+local tricksPreviewListeners = {}
+local lastTricksTank = nil
+
+local function notifyTricksPreviewListeners(template)
+    for _, cb in pairs(tricksPreviewListeners) do
+        pcall(cb, template)
+    end
+end
+
+-- Class-gated spell ID (nil on other classes).
+local function GetTricksSpellID()
+    local _, class = UnitClass("player")
+    return class and TRICKS_SPELL_BY_CLASS[class] or nil
+end
+
+local function GetTricksSpellName()
+    local _, class = UnitClass("player")
+    local spellID = class and TRICKS_SPELL_BY_CLASS[class] or nil
+    if spellID then
+        if C_Spell and C_Spell.GetSpellName then
+            local name = C_Spell.GetSpellName(spellID)
+            if name then return name end
+        end
+        if GetSpellInfo then
+            local name = select(1, GetSpellInfo(spellID))
+            if name then return name end
+        end
+    end
+    if class == "HUNTER" then return "Misdirection" end
+    return "Tricks of the Trade"
+end
+
+local function GetTricksIcon()
+    local spellID = GetTricksSpellID()
+    if spellID and C_Spell and C_Spell.GetSpellTexture then
+        local tex = C_Spell.GetSpellTexture(spellID)
+        if tex then return tex end
+    end
+    return "INV_Misc_QuestionMark"
+end
+
+-- Player class never changes within a session: cache the gate so
+-- non-rogue/hunter characters skip all Tricks/MD work outright.
+local tricksClassSupported = nil
+local function IsTricksClass()
+    if tricksClassSupported == nil then
+        tricksClassSupported = GetTricksSpellID() ~= nil
+    end
+    return tricksClassSupported
+end
+
+-- Built-in template, used when the user hasn't saved a custom one.
+-- {target} is the baked tank name, {spell} the class spell.
+local DEFAULT_TRICKS_TEMPLATE = table.concat({
+    "#showtooltip",
+    "/cast [@mouseover,help,nodead][@" .. TRICKS_TARGET_TOKEN .. ",exists][@focus,help,nodead][] " .. TRICKS_SPELL_TOKEN,
+}, "\n")
+
+-- The effective template: the user's saved template, or the built-in default.
+local function GetTricksTemplate()
+    local db = addon.db and addon.db.consumableMacros
+    local t = db and db.tricksMacroTemplate
+    if t and t ~= "" then return t end
+    return DEFAULT_TRICKS_TEMPLATE
+end
+
+-- Resolves the template for a concrete tank name.
+local function BuildTricksMacroBody(targetName)
+    local spellName = GetTricksSpellName()
+    local body = GetTricksTemplate()
+    body = body:gsub(TRICKS_TARGET_TOKEN, function() return targetName or "focus" end)
+    body = body:gsub(TRICKS_SPELL_TOKEN, function() return spellName end)
+    return body
+end
+
+-- Writes a new body into the TFTricksMD macro (creating it if missing).
+local function WriteTricksMacroBody(body)
+    if not body or body == "" then return end
+    if InCombatLockdown() then return end
+    local macroID = GetMacroIndexByName(TRICKS_MACRO_NAME)
+    if macroID ~= 0 then
+        EditMacro(macroID, nil, nil, body)
+    else
+        CreateMacro(TRICKS_MACRO_NAME, GetTricksIcon(), body)
+    end
+end
+
+-- First group member flagged TANK (never the player).
+local function FindGroupTank()
+    if IsInRaid() then
+        for i = 1, GetNumGroupMembers() do
+            local unit = "raid" .. i
+            if not UnitIsUnit(unit, "player") and UnitGroupRolesAssigned(unit) == "TANK" then
+                local name = UnitName(unit)
+                if name then return name end
+            end
+        end
+    elseif IsInGroup() then
+        for i = 1, GetNumGroupMembers() - 1 do
+            local unit = "party" .. i
+            if UnitGroupRolesAssigned(unit) == "TANK" then
+                local name = UnitName(unit)
+                if name then return name end
+            end
+        end
+    end
+    return nil
+end
+
+local function UpdateTricksMacro()
+    local db = addon.db and addon.db.consumableMacros
+    if not db or not db.tricksMacroEnabled then
+        notifyTricksPreviewListeners(nil)
+        return
+    end
+    if not IsTricksClass() then
+        notifyTricksPreviewListeners(nil)
+        return
+    end
+    if InCombatLockdown() then return end
+    -- Trigger macro: minimal body calling into the addon.
+    EnsureGlobalMacro(TRICKS_TRIGGER_NAME, GetTricksIcon(), "/tf tricks")
+    local tank = FindGroupTank()
+    if tank then
+        if tank ~= lastTricksTank then
+            WriteTricksMacroBody(BuildTricksMacroBody(tank))
+            lastTricksTank = tank
+        end
+    elseif GetMacroIndexByName(TRICKS_MACRO_NAME) == 0 then
+        -- Never baked before: create with focus fallback.
+        WriteTricksMacroBody(BuildTricksMacroBody("focus"))
+    end
+    notifyTricksPreviewListeners(GetTricksTemplate())
+end
+
+-- Manual refresh (/tf tricks): bake a friendly target when given,
+-- otherwise auto-find the tank.
+local function SetTricksTarget()
+    if InCombatLockdown() then return end
+    if not IsTricksClass() then
+        print("TF QoL: Auto Tricks/MD is for rogues and hunters.")
+        return
+    end
+    local targetName
+    if UnitName("target") and UnitIsFriend("player", "target") and not UnitIsDead("target") then
+        targetName = UnitName("target")
+    else
+        targetName = FindGroupTank() or "focus"
+    end
+    WriteTricksMacroBody(BuildTricksMacroBody(targetName))
+    lastTricksTank = (targetName ~= "focus") and targetName or lastTricksTank
+    notifyTricksPreviewListeners(GetTricksTemplate())
+    print("Tricks/MD: " .. targetName)
+end
+
+-- ════════════════════════════════════════════════════════════════
 -- Part 4: Event Handling
 -- ════════════════════════════════════════════════════════════════
 
@@ -991,6 +1165,7 @@ local function OnEvent(self, event, arg1)
             UpdateDrinkMacro(false)
         end
         if db.piMacroEnabled then UpdatePIMacro() end
+        if db.tricksMacroEnabled and IsTricksClass() then UpdateTricksMacro() end
         return
     end
 
@@ -998,6 +1173,7 @@ local function OnEvent(self, event, arg1)
         if db.healthMacroEnabled then UpdateHealthMacro(true) end
         if db.drinkMacroEnabled then UpdateDrinkMacro(true) end
         if db.piMacroEnabled then UpdatePIMacro() end
+        if db.tricksMacroEnabled and IsTricksClass() then UpdateTricksMacro() end
 
     elseif event == "BAG_UPDATE_DELAYED" then
         if db.healthMacroEnabled then UpdateHealthMacro(false) end
@@ -1033,6 +1209,10 @@ local function OnEvent(self, event, arg1)
 
     elseif event == "PLAYER_EQUIPMENT_CHANGED" then
         if db.healthMacroEnabled then UpdateHealthMacro(false) end
+
+    elseif event == "GROUP_ROSTER_UPDATE" or event == "PLAYER_ROLES_ASSIGNED"
+        or event == "PLAYER_ENTERING_WORLD" or event == "GROUP_JOINED" or event == "GROUP_LEFT" then
+        if db.tricksMacroEnabled and IsTricksClass() then UpdateTricksMacro() end
     end
 end
 
@@ -1054,15 +1234,22 @@ function module:OnEnable()
     eventFrame:RegisterEvent("PLAYER_TALENT_UPDATE")
     eventFrame:RegisterEvent("UNIT_MAXHEALTH")
     eventFrame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+    eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
+    eventFrame:RegisterEvent("PLAYER_ROLES_ASSIGNED")
+    eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    eventFrame:RegisterEvent("GROUP_JOINED")
+    eventFrame:RegisterEvent("GROUP_LEFT")
 end
 
 function module:OnDisable()
     eventFrame:UnregisterAllEvents()
     lastHealthMacroKey = nil
     lastDrinkItemPlaced = nil
+    lastTricksTank = nil
     notifyPreviewListeners(healthPreviewListeners, {})
     notifyPreviewListeners(drinkPreviewListeners, {})
     notifyPIPreviewListeners(nil)
+    notifyTricksPreviewListeners(nil)
 end
 
 -- ════════════════════════════════════════════════════════════════
@@ -1081,6 +1268,46 @@ end
 
 function module:RefreshPIMacro()
     UpdatePIMacro()
+end
+
+function module:RefreshTricksMacro()
+    lastTricksTank = nil
+    UpdateTricksMacro()
+end
+
+-- Called by the /tf tricks slash command and the TFSetTricks macro.
+function module:SetTricksTarget()
+    SetTricksTarget()
+end
+
+-- Live preview API for the settings GUI (Tricks/MD macro body textarea).
+function module:GetTricksMacroBody()
+    return GetTricksTemplate()
+end
+
+-- Persist the user's edited template. The live TFTricksMD macro is
+-- (re)baked on the next tank change or /tf tricks, substituting
+-- {target} and {spell}.
+function module:SetTricksMacroBody(text)
+    local db = addon.db and addon.db.consumableMacros
+    if not db then return end
+    db.tricksMacroTemplate = text or ""
+    notifyTricksPreviewListeners(GetTricksTemplate())
+end
+
+function module:RegisterTricksPreviewListener(key, callback)
+    if type(key) ~= "string" then return end
+    tricksPreviewListeners[key] = callback
+    if type(callback) == "function" then
+        local ok, template = pcall(GetTricksTemplate)
+        if ok then
+            pcall(callback, template)
+        end
+    end
+end
+
+function module:UnregisterTricksPreviewListener(key)
+    if type(key) == "string" then tricksPreviewListeners[key] = nil end
 end
 
 -- Called by the /tf pi slash command and the TFSetPI macro.

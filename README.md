@@ -16,6 +16,7 @@ Auto-updating account macros:
 
 - **TFHealthPotion** / **TFDrink** — inventory-, level-, and spec-aware macros that rebuild when you loot, level up, or change spec.
 - **Power Infusion helper** — target a player and run `/tf pi` (or press the **TFSetPI** macro) to bake their name into your **PI** macro (mouseover > that player > you). The macro body is an editable template in the settings: `{target}` is replaced with the baked name, so you can add, remove, or edit lines (e.g. drop the Shadow Word: Madness cast or spec-gate the trinket line).
+- **Auto Tricks/MD helper** — rogues and hunters get a no-thinking **TFTricksMD** button: the addon finds the group tank and bakes their name in (mouseover > tank > focus > target), refreshing automatically on group changes or via `/tf tricks` (or the **TFSetTricks** macro). Editable template: `{target}` is the tank, `{spell}` is your class spell.
 
 ### Item Upgrade Reminder
 
@@ -82,6 +83,7 @@ The settings panel (`/tf`) is a custom Catppuccin Mocha-themed GUI with:
 | `/tf`     | Open the settings panel         |
 | `/tf char`| Toggle the Character Viewer     |
 | `/tf pi`  | Bake targeted player into the PI macro |
+| `/tf tricks` | Bake group tank into the Tricks/MD macro |
 
 ## Installation
 
