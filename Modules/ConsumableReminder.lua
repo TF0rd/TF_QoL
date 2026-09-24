@@ -27,6 +27,7 @@ local displayFrame = CreateFrame("Frame", "TFQoL_ConsumableReminderFrame", UIPar
 -- No hardcoded anchor here: position comes from TFQoLDB via UpdatePosition
 -- on enable (Core.lua holds the defaults).
 displayFrame:SetSize(16, 16)
+displayFrame:EnableMouse(false)
 displayFrame:Hide()
 
 displayFrame.text = displayFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
@@ -186,6 +187,9 @@ local function EntryHasID(entry, itemID)
     return false
 end
 
+-- Forward declaration: TryMergeRanks calls AbsorbBagRanks, defined below.
+local AbsorbBagRanks
+
 -- Folds a newly-cached rank into an existing same-name entry, if any.
 local function TryMergeRanks(itemID)
     local db = GetDB()
@@ -217,7 +221,10 @@ end
 
 -- Pulls every same-named rank currently in the bags into the entry, so
 -- tracking one rank tracks them all by default.
-local function AbsorbBagRanks(entry)
+-- NOTE: plain assignment (not `local function`) so this lands in the
+-- forward-declared local above; `function AbsorbBagRanks` would create
+-- a global and leave TryMergeRanks calling nil.
+AbsorbBagRanks = function(entry)
     if not (C_Container and C_Container.GetContainerNumSlots and C_Container.GetContainerItemID) then return end
     local base = EntryBaseName(entry)
     if not base then return end

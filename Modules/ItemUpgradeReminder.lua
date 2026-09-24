@@ -19,6 +19,7 @@ local displayFrame = CreateFrame("Frame", "TFQoL_ItemUpgradeReminderFrame", UIPa
 -- No hardcoded anchor here: position comes from TFQoLDB via UpdatePosition
 -- on enable (Core.lua holds the defaults).
 displayFrame:SetSize(16, 16)
+displayFrame:EnableMouse(false)
 displayFrame:Hide()
 
 displayFrame.text = displayFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")

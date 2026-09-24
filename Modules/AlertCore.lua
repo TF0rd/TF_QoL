@@ -62,6 +62,7 @@ function addon:CreateIndicatorAlert(name, opts)
     -- ── Local state ──────────────────────────────────────────
     local frame = CreateFrame("Frame", opts.frameName, UIParent)
     frame:SetSize(16, 16)
+    frame:EnableMouse(false)
     frame:Hide()
 
     frame.text = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")

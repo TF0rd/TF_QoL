@@ -11,6 +11,7 @@ local frame = CreateFrame("Frame", "TFQoL_StealthIndicatorFrame", UIParent)
 -- No hardcoded anchor here: position comes from TFQoLDB via UpdatePosition
 -- on enable (Core.lua holds the defaults).
 frame:SetSize(12, 12)
+frame:EnableMouse(false)
 frame:Hide()
 
 frame.text = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")

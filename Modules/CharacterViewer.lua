@@ -2352,8 +2352,8 @@ local function BuildCharRow(parent, yOffset, rowData, widths, numericCols)
                     for _, s in ipairs(slots) do
                         if type(s) == "table" and (s.progress or 0) >= (s.threshold or 0)
                             and s.threshold and s.threshold > 0 then
-                            -- Completed: ilvl colored by item quality
-                            local hex = s.qColor or "ffffff"
+                            -- Completed: ilvl tier color (same as Equip column)
+                            local hex = addon:IlvlTierHex(s.ilvl) or s.qColor or "ffffff"
                             parts[#parts + 1] = "|cff" .. hex
                                 .. tostring(s.ilvl or "?") .. "|r"
                             prevIncomplete = false
